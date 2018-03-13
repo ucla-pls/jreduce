@@ -1,0 +1,29 @@
+name: jreduce
+description: |
+  A tool for reducing Java Bytecode files 
+version: 0.0.1
+author: Christian Gram Kalhauge
+maintainer: Christian Gram Kalhauge <kalhauge@cs.ucla.edu>
+synopsis: A tool for reducing Java Bytecode files 
+
+license: MIT
+license-file: ../LICENSE
+category: Language, Java, JVM
+github: ucla-pls/jvmhs
+
+dependencies:
+  - base >= 4.10 && < 4.11
+  - docopt
+  - lens
+  - lens-action
+  - aeson
+  - containers
+  - filepath
+  - bytestring
+  - text
+  - jvmhs
+
+executables:
+  jreduce:
+    source-dirs: .
+    main: Main.hs
