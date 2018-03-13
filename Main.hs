@@ -1,12 +1,18 @@
+{-# LANGUAGE BangPatterns    #-}
 {-# LANGUAGE QuasiQuotes     #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
 
+import           Control.Monad.IO.Class
+import           Data.Foldable
+import qualified Data.Set               as S
+import qualified Data.Text.IO           as Text
 import           System.Console.Docopt
-import           System.Environment    (getArgs)
+import           System.Environment     (getArgs)
 
-import Control.Lens
+import           Control.Lens           hiding (argument)
+import           Jvmhs
 
 patterns :: Docopt
 patterns = [docopt|
@@ -21,8 +27,9 @@ Options:
 
 -- | The config file dictates the execution of the program
 data Config = Config
-  { _cfgClassPath :: [FilePath]
+  { _cfgClassPath :: ClassPath
   , _cfgOutput    :: Maybe FilePath
+  , _cfgClassName :: ClassName
   } deriving (Show)
 
 makeLenses 'Config
@@ -31,36 +38,31 @@ getArgOrExit :: Arguments -> Option -> IO String
 getArgOrExit = getArgOrExitWith patterns
 
 parseConfig :: Arguments -> IO Config
-parseConfig args =
+parseConfig args = do
+  cn <- strCls <$> getArgOrExit args (argument "classname")
   return $ Config
     { _cfgClassPath =
-        case concatMap (split ':') $ getAllArgs args (longOption "cp") of
+        case concatMap splitClassPath $ getAllArgs args (longOption "cp") of
           [] -> ["."]
           as -> as
     , _cfgOutput = getArg args (shortOption 'o')
+    , _cfgClassName = cn
     }
 
 main :: IO ()
 main = do
-  argv <- getArgs
-  args <- parseArgsOrExit patterns argv
+  cfg <- parseConfig =<< parseArgsOrExit patterns =<< getArgs
+  classreader <- preload =<< createClassLoader cfg
 
-  cfg <- parseConfig args
+  _ <- runHierarchy classreader $ do
+    clss <- computeClassClosure (S.singleton $ cfg^.cfgClassName)
+    liftIO . forM_ clss $ \c ->
+      Text.putStrLn $ classNameAsText c
 
-  print cfg
+  return ()
 
+-- | Create a class loader from the config
+createClassLoader :: Config -> IO ClassLoader
+createClassLoader cfg =
+  return $ ClassLoader [] [] (cfg ^. cfgClassPath)
 
--- | split splits a list on an element
--- >> split ':' "Hello:World"
--- [ "Hello", "World" ]
--- split :: Char -> [Char] -> [[Char]]
-split :: (Eq a) => a -> ([a] -> [[a]])
-split a = go []
-  where
-    go lst [] =
-      [ reverse lst ]
-    go lst (b':rest)
-      | b' == a =
-        reverse lst : go [] rest
-      | otherwise =
-        go (b':lst) rest
