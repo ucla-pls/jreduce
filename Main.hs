@@ -4,8 +4,8 @@
 module Main where
 
 
-import           Control.Monad.IO.Class
-import           Data.Foldable
+-- import           Control.Monad.IO.Class
+-- import           Data.Foldable
 import qualified Data.Set               as S
 import qualified Data.Text.IO           as Text
 import           System.Console.Docopt
@@ -23,6 +23,8 @@ Usage:
 
 Options:
   --cp=<classpath>      The classpath to search for classess
+  --stdlib              Also include the stdlib (Don't do this)
+  --jre=<jre>           The location of the stdlib
 |]
 
 -- | The config file dictates the execution of the program
@@ -30,6 +32,8 @@ data Config = Config
   { _cfgClassPath :: ClassPath
   , _cfgOutput    :: Maybe FilePath
   , _cfgClassName :: ClassName
+  , _cfgUseStdlib :: Bool
+  , _cfgJre       :: Maybe FilePath
   } deriving (Show)
 
 makeLenses 'Config
@@ -47,6 +51,8 @@ parseConfig args = do
           as -> as
     , _cfgOutput = getArg args (shortOption 'o')
     , _cfgClassName = cn
+    , _cfgUseStdlib = isPresent args (longOption "stdlib")
+    , _cfgJre = getArg args (longOption "jre")
     }
 
 main :: IO ()
@@ -54,15 +60,27 @@ main = do
   cfg <- parseConfig =<< parseArgsOrExit patterns =<< getArgs
   classreader <- preload =<< createClassLoader cfg
 
-  _ <- runHierarchy classreader $ do
-    clss <- computeClassClosure (S.singleton $ cfg^.cfgClassName)
-    liftIO . forM_ clss $ \c ->
-      Text.putStrLn $ classNameAsText c
+  result <- runHierarchy classreader $ do
+    computeClassClosure (S.singleton $ cfg^.cfgClassName)
 
-  return ()
+  case result of
+    Right (clss, hs) ->
+      case cfg^.cfgOutput of
+        Just fp ->
+          savePartialHierarchyState fp clss hs
+        Nothing ->
+          mapM_ (Text.putStrLn . classNameAsText) clss
+    Left msg ->
+      error $ show msg
 
 -- | Create a class loader from the config
 createClassLoader :: Config -> IO ClassLoader
-createClassLoader cfg =
-  return $ ClassLoader [] [] (cfg ^. cfgClassPath)
-
+createClassLoader cfg
+  | cfg ^. cfgUseStdlib =
+    case cfg ^. cfgJre of
+      Nothing ->
+        fromClassPath (cfg ^. cfgClassPath)
+      Just jre ->
+        fromJreFolder (cfg ^. cfgClassPath) jre
+  | otherwise =
+    return $ ClassLoader [] [] (cfg ^. cfgClassPath)
