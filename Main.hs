@@ -1,17 +1,13 @@
-{-# LANGUAGE BangPatterns    #-}
 {-# LANGUAGE QuasiQuotes     #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
-
--- import           Control.Monad.IO.Class
--- import           Data.Foldable
-import qualified Data.Set               as S
-import qualified Data.Text.IO           as Text
+import qualified Data.Set              as S
+import qualified Data.Text.IO          as Text
 import           System.Console.Docopt
-import           System.Environment     (getArgs)
+import           System.Environment    (getArgs)
 
-import           Control.Lens           hiding (argument)
+import           Control.Lens          hiding (argument)
 import           Jvmhs
 
 patterns :: Docopt
@@ -69,7 +65,7 @@ main = do
         Just fp ->
           savePartialHierarchyState fp clss hs
         Nothing ->
-          mapM_ (Text.putStrLn . classNameAsText) clss
+          mapM_ (Text.putStrLn . view fullyQualifiedName) clss
     Left msg ->
       error $ show msg
 
