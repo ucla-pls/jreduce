@@ -56,7 +56,7 @@ main = do
   cfg <- parseConfig =<< parseArgsOrExit patterns =<< getArgs
   classreader <- preload =<< createClassLoader cfg
 
-  result <- runHierarchy classreader $ do
+  result <- flip runHierarchy' (emptyState classreader) $ do
     computeClassClosure (S.singleton $ cfg^.cfgClassName)
 
   case result of
