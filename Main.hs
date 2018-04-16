@@ -15,6 +15,7 @@ patterns = [docopt|
 jreduce version 0.0.1
 
 Usage:
+  jreduce ( -h | --help )
   jreduce [options] [-o <output>] <classname>
 
 Options:
