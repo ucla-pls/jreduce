@@ -80,7 +80,6 @@ main = do
         exitWithUsage patterns
       | otherwise -> do
         cfg <- parseConfig args
-        print cfg
         classreader <- preload =<< createClassLoader cfg
 
         result <- flip runHierarchy' (emptyState classreader) $ do
