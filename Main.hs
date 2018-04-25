@@ -21,8 +21,7 @@ jreduce version 0.0.1
 
 Usage:
   jreduce ( -h | --help )
-  jreduce [options] [-o <output>] -
-  jreduce [options] [-o <output>] <classname>...
+  jreduce [options] [-o <output>] [-] [<classname>...]
 
 Options:
   --cp=<classpath>      The classpath to search for classess
@@ -62,12 +61,12 @@ parseConfig args = do
     }
 
   where
+    classnames' = getAllArgs args $ argument "classname"
     readClassNames = do
-      names <- if isPresent args (command "-")
-        then do
-          lines <$> getContents
-        else
-          return . getAllArgs args $ argument "classname"
+      names <-
+        if isPresent args (command "-")
+        then do (classnames' ++) . lines <$> getContents
+        else return classnames'
       return . S.fromList . map dotCls $ names
 
 
@@ -81,7 +80,6 @@ main = do
       | otherwise -> do
         cfg <- parseConfig args
         classreader <- preload =<< createClassLoader cfg
-
         result <- flip runHierarchy' (emptyState classreader) $ do
           computeClassClosure (cfg^.cfgClasses)
 
