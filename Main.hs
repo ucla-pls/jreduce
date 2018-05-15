@@ -80,14 +80,14 @@ main = do
       | otherwise -> do
         cfg <- parseConfig args
         classreader <- preload =<< createClassLoader cfg
-        result <- flip runHierarchy' (emptyState classreader) $ do
+        result <- flip runClassPool' (emptyState classreader) $ do
           computeClassClosure (cfg^.cfgClasses)
 
         case result of
           Right ((found, missed), hs) -> do
             case cfg^.cfgOutput of
               Just fp ->
-                savePartialHierarchyState fp found hs
+                savePartialClassPoolState fp found hs
               Nothing ->
                 mapM_ (Text.putStrLn . view fullyQualifiedName) found
             when (cfg^.cfgWarn) $ do
