@@ -69,6 +69,27 @@ parseConfig args = do
         else return classnames'
       return . S.fromList . map strCls $ names
 
+runJReduce :: Config -> IO ()
+runJReduce cfg = do
+  classreader <- preload =<< createClassLoader cfg
+  result <- flip runClassPool' (emptyState classreader) $ do
+    computeClassClosure (cfg^.cfgClasses)
+
+  case result of
+    Right ((found, missed), hs) -> do
+      case cfg^.cfgOutput of
+        Just fp ->
+          savePartialClassPoolState fp found hs
+        Nothing ->
+          mapM_ (Text.putStrLn . view fullyQualifiedName) found
+      when (cfg^.cfgWarn) $ do
+        hPutStrLn stderr "Did not find these classes on the class path while reducing:"
+        mapM_ ( Text.hPutStrLn stderr
+              . Text.append "  - "
+              . view fullyQualifiedName
+              ) missed
+    Left msg ->
+      error $ show msg
 
 main :: IO ()
 main = do
@@ -76,29 +97,10 @@ main = do
   case args' of
     Right args
       | isPresent args (longOption "help") ->
-        exitWithUsage patterns
+          exitWithUsage patterns
       | otherwise -> do
-        cfg <- parseConfig args
-        classreader <- preload =<< createClassLoader cfg
-        result <- flip runClassPool' (emptyState classreader) $ do
-          computeClassClosure (cfg^.cfgClasses)
-
-        case result of
-          Right ((found, missed), hs) -> do
-            case cfg^.cfgOutput of
-              Just fp ->
-                savePartialClassPoolState fp found hs
-              Nothing ->
-                mapM_ (Text.putStrLn . view fullyQualifiedName) found
-            when (cfg^.cfgWarn) $ do
-              hPutStrLn stderr "Did not find these classes on the class path while reducing:"
-              mapM_ ( Text.hPutStrLn stderr
-                    . Text.append "  - "
-                    . view fullyQualifiedName
-                    ) missed
-          Left msg ->
-            error $ show msg
-
+          cfg <- parseConfig args
+          runJReduce cfg
     Left msg -> do
       print msg
 
