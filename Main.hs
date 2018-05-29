@@ -1,16 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes     #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE TemplateHaskell   #-}
 module Main where
 
+import qualified Data.List             as L
+import Data.Monoid
 import qualified Data.Set              as S
-import qualified Data.Text.IO          as Text
 import qualified Data.Text             as Text
-import System.IO
+import qualified Data.Text.IO          as Text
 import           System.Console.Docopt
 import           System.Environment    (getArgs)
+import           System.IO
 
-import Control.Monad
+import           Control.Monad
 
 import           Control.Lens          hiding (argument)
 import           Jvmhs
@@ -24,20 +27,23 @@ Usage:
   jreduce [options] [-o <output>] [-] [<classname>...]
 
 Options:
-  --cp=<classpath>      The classpath to search for classess
-  --stdlib              Also include the stdlib (Don't do this)
-  --jre=<jre>           The location of the stdlib
-  -W, --warn            Warn about missing classes to the stderr
+  --cp=<classpath>       The classpath to search for classess
+  --stdlib               Also include the stdlib (Don't do this)
+  --jre=<jre>            The location of the stdlib
+  -W, --warn             Warn about missing classes to the stderr
+  --progress=<progress>  A file that will contain csv data for each
+                         interation of the program
 |]
 
 -- | The config file dictates the execution of the program
 data Config = Config
-  { _cfgClassPath :: ClassPath
-  , _cfgOutput    :: Maybe FilePath
-  , _cfgClasses   :: S.Set ClassName
-  , _cfgUseStdlib :: Bool
-  , _cfgWarn      :: Bool
-  , _cfgJre       :: Maybe FilePath
+  { _cfgClassPath    :: ClassPath
+  , _cfgOutput       :: Maybe FilePath
+  , _cfgClasses      :: S.Set ClassName
+  , _cfgUseStdlib    :: Bool
+  , _cfgWarn         :: Bool
+  , _cfgJre          :: Maybe FilePath
+  , _cfgProgressFile :: Maybe FilePath
   } deriving (Show)
 
 makeLenses 'Config
@@ -58,6 +64,7 @@ parseConfig args = do
     , _cfgWarn = isPresent args (longOption "warn")
     , _cfgUseStdlib = isPresent args (longOption "stdlib")
     , _cfgJre = getArg args (longOption "jre")
+    , _cfgProgressFile = getArg args (longOption "progress")
     }
 
   where
@@ -69,11 +76,54 @@ parseConfig args = do
         else return classnames'
       return . S.fromList . map strCls $ names
 
+
+setupProgress :: Config -> IO ()
+setupProgress cfg =
+  case cfg^.cfgProgressFile of
+    Just pf ->
+      withFile pf WriteMode $ \h -> do
+        hPutStrLn h "step,classes,interfaces,impls,methods"
+    Nothing ->
+      return ()
+
+logProgress ::
+  forall m t. (MonadClassPool m, MonadIO m, Foldable t)
+  => Config
+  -> t ClassName
+  -> String
+  -> m ()
+logProgress cfg clss name =
+  case cfg^.cfgProgressFile of
+    Just pf -> do
+      let numClss = length clss
+      (Sum numInterfaces, Sum numImpls, Sum numMethods) <-
+        clss ^! folded.load.to (
+          \cls -> ( Sum (if isInterface cls then 1 :: Int else 0)
+                  , Sum (cls^.classInterfaces.to length)
+                  , Sum (cls^.classMethods.to length)
+                  ))
+      liftIO $ withFile pf AppendMode $ \h -> do
+        hPutStrLn h $ L.intercalate ","
+          [ name
+          , show $ numClss
+          , show $ numInterfaces
+          , show $ numImpls
+          , show $ numMethods
+          ]
+    Nothing ->
+      return ()
+
+
 runJReduce :: Config -> IO ()
 runJReduce cfg = do
   classreader <- preload =<< createClassLoader cfg
+  clss <- map fst <$> classes classreader
+  setupProgress cfg
   result <- flip runClassPool' (emptyState classreader) $ do
-    computeClassClosure (cfg^.cfgClasses)
+    logProgress cfg clss "-"
+    (found, missing) <- computeClassClosure (cfg^.cfgClasses)
+    logProgress cfg found "class-closure"
+    return (found, missing)
 
   case result of
     Right ((found, missed), hs) -> do
@@ -96,7 +146,8 @@ main = do
   args' <- parseArgs patterns <$> getArgs
   case args' of
     Right args
-      | isPresent args (longOption "help") ->
+      | isPresent args (longOption "help")
+        || isPresent args (shortOption 'h') ->
           exitWithUsage patterns
       | otherwise -> do
           cfg <- parseConfig args
