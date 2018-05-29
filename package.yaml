@@ -22,6 +22,9 @@ dependencies:
   - bytestring
   - text
   - jvmhs
+  - process
+  - directory
+  - temporary
 
 executables:
   jreduce:
