@@ -18,6 +18,7 @@ import           System.IO.Temp
 import           System.Process
 
 import           Control.Monad
+import           Control.Monad.IO.Class
 
 import           Control.Lens          hiding (argument)
 import           Jvmhs
@@ -101,22 +102,22 @@ setupProgress cfg =
       return ()
 
 logProgress ::
-  forall m t. (MonadClassPool m, MonadIO m, Foldable t)
+  forall m. (MonadClassPool m, MonadIO m)
   => Config
-  -> t ClassName
   -> String
   -> m ()
-logProgress cfg clss name =
+logProgress cfg name =
   case cfg^.cfgProgressFile of
     Just pf -> do
+      clss <- allClasses
       let numClss = length clss
       (Sum numInterfaces, Sum numImpls, Sum numMethods) <-
-        clss ^! folded.load.to (
+        clss ^! folded.to (
           \cls -> ( Sum (if isInterface cls then 1 :: Int else 0)
                   , Sum (cls^.classInterfaces.to length)
                   , Sum (cls^.classMethods.to length)
                   ))
-      prop <- runProperty cfg clss
+      prop <- runProperty cfg
       liftIO $ withFile pf AppendMode $ \h -> do
         hPutStrLn h $ L.intercalate ","
           [ name
@@ -130,17 +131,16 @@ logProgress cfg clss name =
       return ()
 
 runProperty ::
-  (MonadClassPool m, MonadIO m, Foldable t)
+  (MonadClassPool m, MonadIO m)
   => Config
-  -> t ClassName
   -> m Bool
-runProperty cfg clss =
+runProperty cfg =
   case cfg^.cfgProperty of
     cmd:cmdArgs -> do
       tmp <- liftIO $ do
         createDirectoryIfMissing True (cfg^.cfgTempFolder)
         createTempDirectory (cfg^.cfgTempFolder) "jreduce"
-      dumpClassPool tmp clss
+      saveAllClasses tmp
       res <- liftIO $ withCreateProcess (proc cmd (cmdArgs ++ [tmp])) $
         \_ _ _ ph -> do
           ec <- waitForProcess ph
@@ -157,29 +157,21 @@ runProperty cfg clss =
 runJReduce :: Config -> IO ()
 runJReduce cfg = do
   classreader <- preload =<< createClassLoader cfg
-  clss <- map fst <$> classes classreader
   setupProgress cfg
-  result <- flip runClassPool' (emptyState classreader) $ do
-    logProgress cfg clss "-"
-    (found, missing) <- computeClassClosure (cfg^.cfgClasses)
-    logProgress cfg found "class-closure"
-    return (found, missing)
+  (errs, st) <- loadClassPoolState classreader
 
-  case result of
-    Right ((found, missed), hs) -> do
-      case cfg^.cfgOutput of
-        Just fp ->
-          savePartialClassPoolState fp found hs
-        Nothing ->
-          mapM_ (Text.putStrLn . view fullyQualifiedName) found
-      when (cfg^.cfgWarn) $ do
-        hPutStrLn stderr "Did not find these classes on the class path while reducing:"
-        mapM_ ( Text.hPutStrLn stderr
-              . Text.append "  - "
-              . view fullyQualifiedName
-              ) missed
-    Left msg ->
-      error $ show msg
+  handleFailedToLoad errs
+
+  void . flip runClassPoolT st $ do
+    logProgress cfg "-"
+    (found, missing) <- computeClassClosure (cfg^.cfgClasses)
+    logProgress cfg "class-closure"
+
+  where
+    handleFailedToLoad [] = return ()
+    handleFailedToLoad errs = do
+      hPutStrLn stderr "Could not load the following classes"
+      mapM_ (\e -> hPutStr stderr "  - " >> hPutStrLn stderr (show e)) errs
 
 main :: IO ()
 main = do
