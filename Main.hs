@@ -7,6 +7,7 @@ module Main where
 import qualified Data.List             as L
 import           Data.Monoid
 import qualified Data.Set              as S
+import qualified Data.Vector           as V
 import qualified Data.Text             as Text
 import qualified Data.Text.IO          as Text
 import           System.Console.Docopt
@@ -22,6 +23,7 @@ import           Control.Monad.IO.Class
 
 import           Control.Lens          hiding (argument)
 import           Jvmhs
+import           Jvmhs.Analysis.Reduce
 
 patterns :: Docopt
 patterns = [docopt|
@@ -117,7 +119,7 @@ logProgress cfg name =
                   , Sum (cls^.classInterfaces.to length)
                   , Sum (cls^.classMethods.to length)
                   ))
-      prop <- runProperty cfg
+      prop <- runProperty cfg $ (^. className) <$> clss
       liftIO $ withFile pf AppendMode $ \h -> do
         hPutStrLn h $ L.intercalate ","
           [ name
@@ -131,16 +133,17 @@ logProgress cfg name =
       return ()
 
 runProperty ::
-  (MonadClassPool m, MonadIO m)
+  (MonadClassPool m, MonadIO m, Foldable t)
   => Config
+  -> t ClassName
   -> m Bool
-runProperty cfg =
+runProperty cfg clss =
   case cfg^.cfgProperty of
     cmd:cmdArgs -> do
       tmp <- liftIO $ do
         createDirectoryIfMissing True (cfg^.cfgTempFolder)
         createTempDirectory (cfg^.cfgTempFolder) "jreduce"
-      saveAllClasses tmp
+      saveClasses tmp clss
       res <- liftIO $ withCreateProcess (proc cmd (cmdArgs ++ [tmp])) $
         \_ _ _ ph -> do
           ec <- waitForProcess ph
@@ -154,6 +157,7 @@ runProperty cfg =
       return res
     _ -> return True
 
+
 runJReduce :: Config -> IO ()
 runJReduce cfg = do
   classreader <- preload =<< createClassLoader cfg
@@ -163,9 +167,21 @@ runJReduce cfg = do
   handleFailedToLoad errs
 
   void . flip runClassPoolT st $ do
+    clss <- allClassNames
+    retcode <- runProperty cfg clss
+    liftIO $ print retcode
     logProgress cfg "-"
+    minVec <- ddmin (V.fromList clss) (runProperty cfg)
+    liftIO $ print minVec
     (found, missing) <- computeClassClosure (cfg^.cfgClasses)
-    logProgress cfg "class-closure"
+    liftIO $ print found
+----
+--    forM_ clss $ \c ->
+--      unless (c `S.member` found)  (deleteClass c)
+--    logProgress cfg "class-closure"
+
+--    reduceInterfaces
+--    logProgress cfg "reduce-interface"
 
   where
     handleFailedToLoad [] = return ()
