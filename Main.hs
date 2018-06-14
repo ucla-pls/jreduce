@@ -24,6 +24,7 @@ import           Control.Monad.IO.Class
 import           Control.Lens          hiding (argument)
 import           Jvmhs
 import           Jvmhs.Analysis.Reduce
+import           Control.Concurrent
 
 patterns :: Docopt
 patterns = [docopt|
@@ -146,8 +147,15 @@ runProperty cfg clss =
       saveClasses tmp clss
       res <- liftIO $ withCreateProcess (proc cmd (cmdArgs ++ [tmp])) $
         \_ _ _ ph -> do
-          ec <- waitForProcess ph
-          return $ ec == ExitSuccess
+--          ec <- waitForProcess ph
+          threadDelay 1000000
+          maybeCode <- getProcessExitCode ph
+          case maybeCode of
+            Nothing -> do
+                          terminateProcess ph
+                          return True
+            Just ec -> return $ ec == ExitSuccess
+--          return $ ec == ExitSuccess
       liftIO (
         if (cfg^.cfgKeepTempFolder) then
           putStrLn tmp
@@ -168,18 +176,18 @@ runJReduce cfg = do
 
   void . flip runClassPoolT st $ do
     clss <- allClassNames
-    retcode <- runProperty cfg clss
-    liftIO $ print retcode
     logProgress cfg "-"
+
     minVec <- ddmin (V.fromList clss) (runProperty cfg)
+    liftIO $ print clss
     liftIO $ print minVec
     (found, missing) <- computeClassClosure (cfg^.cfgClasses)
     liftIO $ print found
-----
---    forM_ clss $ \c ->
---      unless (c `S.member` found)  (deleteClass c)
---    logProgress cfg "class-closure"
 
+    forM_ clss $ \c ->
+      unless (c `S.member` found)  (deleteClass c)
+    logProgress cfg "class-closure"
+--
 --    reduceInterfaces
 --    logProgress cfg "reduce-interface"
 
