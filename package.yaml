@@ -26,6 +26,7 @@ dependencies:
   - directory
   - temporary
   - vector
+  - split
 
 executables:
   jreduce:

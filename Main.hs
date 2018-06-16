@@ -10,6 +10,7 @@ import qualified Data.Set              as S
 import qualified Data.Vector           as V
 import qualified Data.Text             as Text
 import qualified Data.Text.IO          as Text
+import           Data.List.Split
 import           System.Console.Docopt
 import           System.Directory
 import           System.Environment    (getArgs)
@@ -39,6 +40,7 @@ Options:
   --stdlib               Also include the stdlib (Don't do this)
   --jre=<jre>            The location of the stdlib
   -W, --warn             Warn about missing classes to the stderr
+  -r=<reduction>         Reduections
   --progress=<progress>  A file that will contain csv data for each
                          interation of the program
   -c, --core <core>      The core classes, that should not be removed
@@ -53,6 +55,7 @@ data Config = Config
   , _cfgClasses        :: S.Set ClassName
   , _cfgUseStdlib      :: Bool
   , _cfgWarn           :: Bool
+  , _cfgReductions     :: [String]
   , _cfgTempFolder     :: FilePath
   , _cfgJre            :: Maybe FilePath
   , _cfgProgressFile   :: Maybe FilePath
@@ -69,6 +72,7 @@ parseConfig :: Arguments -> IO Config
 parseConfig args = do
   classnames <- readClassNames
   tmpfolder <- getCanonicalTemporaryDirectory
+  reductions <- splitReductions
   return $ Config
     { _cfgClassPath =
         case concatMap splitClassPath $ getAllArgs args (longOption "cp") of
@@ -77,6 +81,7 @@ parseConfig args = do
     , _cfgOutput = getArg args (shortOption 'o')
     , _cfgClasses = classnames
     , _cfgWarn = isPresent args (longOption "warn")
+    , _cfgReductions = reductions
     , _cfgUseStdlib = isPresent args (longOption "stdlib")
     , _cfgJre = getArg args (longOption "jre")
     , _cfgProgressFile = getArg args (longOption "progress")
@@ -93,6 +98,11 @@ parseConfig args = do
       --   then do (classnames' ++) . lines <$> getContents
       --   else return classnames'
       return . S.fromList . map strCls $ classnames'
+    splitReductions = do
+      case getArg args (shortOption 'r') of
+        Nothing -> return []
+        Just s  -> return $ splitOn ":" s
+
 
 
 setupProgress :: Config -> IO ()
@@ -178,18 +188,33 @@ runJReduce cfg = do
     clss <- allClassNames
     logProgress cfg "-"
 
-    minVec <- ddmin (V.fromList clss) (runProperty cfg)
-    liftIO $ print clss
-    liftIO $ print minVec
-    (found, missing) <- computeClassClosure (cfg^.cfgClasses)
-    liftIO $ print found
 
-    forM_ clss $ \c ->
-      unless (c `S.member` found)  (deleteClass c)
-    logProgress cfg "class-closure"
---
---    reduceInterfaces
---    logProgress cfg "reduce-interface"
+    forM_ (cfg^.cfgReductions) $ \red ->
+          case red of
+            "ddmin" ->
+              do
+                minVec <- ddmin (S.fromList clss) (runProperty cfg)
+                forM_ clss $ \c ->
+                  unless (c `S.member` minVec)  (deleteClass c)
+                logProgress cfg "ddmin"
+            "intf" ->
+              do
+                reduceInterfaces
+                logProgress cfg "reduce-interface"
+            "closure" ->
+              do
+                (found, missing) <- computeClassClosure (cfg^.cfgClasses)
+
+                forM_ clss $ \c ->
+                  unless (c `S.member` found)  (deleteClass c)
+                logProgress cfg "class-closure"
+            _ ->
+              liftIO $ print "wrong reducer"
+    liftIO $ print "all classes:"
+    liftIO $ print clss
+    curent <- allClassNames
+    liftIO $ print "reduced classes"
+    liftIO $ print curent
 
   where
     handleFailedToLoad [] = return ()
