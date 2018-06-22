@@ -193,9 +193,9 @@ runJReduce cfg = do
           case red of
             "ddmin" ->
               do
-                minVec <- ddmin (S.fromList clss) (runProperty cfg)
+                minVec <- ddmin (runProperty cfg) clss
                 forM_ clss $ \c ->
-                  unless (c `S.member` minVec)  (deleteClass c)
+                  unless (c `L.elem` minVec)  (deleteClass c)
                 logProgress cfg "ddmin"
             "intf" ->
               do
