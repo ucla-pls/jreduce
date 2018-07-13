@@ -15,6 +15,7 @@ import           System.Console.Docopt
 import           System.Directory
 import           System.Environment    (getArgs)
 import           System.Exit
+import           System.Timeout
 import           System.IO
 import           System.IO.Temp
 import           System.Process
@@ -36,16 +37,17 @@ Usage:
   jreduce [options] [-c <core>...] [-o <output>] [<property>...]
 
 Options:
-  --cp=<classpath>       The classpath to search for classess
-  --stdlib               Also include the stdlib (Don't do this)
-  --jre=<jre>            The location of the stdlib
-  -W, --warn             Warn about missing classes to the stderr
-  -r=<reduction>         Reduections
-  --progress=<progress>  A file that will contain csv data for each
-                         interation of the program
-  -c, --core <core>      The core classes, that should not be removed
-  --tmp <tmp>            The tempfolder default is the system tmp folder
-  -K, --keep             Keep temporary folders around
+  --cp <classpath>        The classpath to search for classess
+  --stdlib                Also include the stdlib (Don't do this)
+  --jre <jre>             The location of the stdlib
+  -W, --warn              Warn about missing classes to the stderr
+  -r <reduction>          Reduections
+  --progress <progress>   A file that will contain csv data for each
+                          interation of the program
+  -c, --core <core>       The core classes, that should not be removed
+  --tmp <tmp>             The tempfolder default is the system tmp folder
+  -K, --keep              Keep temporary folders around
+  -t, --timout <timeout>  Timeout in miliseconds, default is (1000)
 |]
 
 -- | The config file dictates the execution of the program
@@ -61,6 +63,7 @@ data Config = Config
   , _cfgProgressFile   :: Maybe FilePath
   , _cfgProperty       :: [String]
   , _cfgKeepTempFolder :: Bool
+  , _cfgTimeout        :: Int
   } deriving (Show)
 
 makeLenses 'Config
@@ -88,6 +91,7 @@ parseConfig args = do
     , _cfgProperty = getAllArgs args (argument "property")
     , _cfgTempFolder = getArgWithDefault args tmpfolder (longOption "tmp")
     , _cfgKeepTempFolder = isPresent args (longOption "keep")
+    , _cfgTimeout = read $ getArgWithDefault args "1000" (longOption "timeout")
     }
 
   where
@@ -110,27 +114,26 @@ setupProgress cfg =
   case cfg^.cfgProgressFile of
     Just pf ->
       withFile pf WriteMode $ \h -> do
-        hPutStrLn h "step,classes,interfaces,impls,methods,property"
+        hPutStrLn h "step,classes,interfaces,impls,methods"
     Nothing ->
       return ()
 
 logProgress ::
-  forall m. (MonadClassPool m, MonadIO m)
+  forall m t. (MonadClassPool m, MonadIO m, Foldable t)
   => Config
   -> String
+  -> t ClassName
   -> m ()
-logProgress cfg name =
+logProgress cfg name clss =
   case cfg^.cfgProgressFile of
     Just pf -> do
-      clss <- allClasses
       let numClss = length clss
       (Sum numInterfaces, Sum numImpls, Sum numMethods) <-
-        clss ^! folded.to (
+        clss ^! folded.pool._Just.to (
           \cls -> ( Sum (if isInterface cls then 1 :: Int else 0)
                   , Sum (cls^.classInterfaces.to length)
                   , Sum (cls^.classMethods.to length)
                   ))
-      prop <- runProperty cfg $ (^. className) <$> clss
       liftIO $ withFile pf AppendMode $ \h -> do
         hPutStrLn h $ L.intercalate ","
           [ name
@@ -138,43 +141,52 @@ logProgress cfg name =
           , show $ numInterfaces
           , show $ numImpls
           , show $ numMethods
-          , show $ prop
           ]
     Nothing ->
       return ()
 
-runProperty ::
-  (MonadClassPool m, MonadIO m, Foldable t)
+
+createPropertyRunner ::
+  forall m t. (MonadClassPool m, MonadIO m, Foldable t)
   => Config
-  -> t ClassName
-  -> m Bool
-runProperty cfg clss =
+  -> String
+  -> m (t ClassName -> m Bool)
+createPropertyRunner cfg name =
   case cfg^.cfgProperty of
     cmd:cmdArgs -> do
       tmp <- liftIO $ do
         createDirectoryIfMissing True (cfg^.cfgTempFolder)
         createTempDirectory (cfg^.cfgTempFolder) "jreduce"
-      saveClasses tmp clss
-      res <- liftIO $ withCreateProcess (proc cmd (cmdArgs ++ [tmp])) $
+      sem <- liftIO $ newMVar 0
+      return $ runProperty cmd cmdArgs tmp sem
+    _ ->
+      return $ const (return True)
+  where
+    pad m c xs = replicate (m - length xs) c ++ xs
+    runProperty :: String -> [String] -> FilePath -> MVar Int -> t ClassName -> m Bool
+    runProperty cmd cmdArgs tmp sem clss = do
+      iteration <- liftIO $ modifyMVar sem (\i -> return (i + 1, i))
+      let
+        iterationname = name ++ "-" ++ pad 8 '0' (show iteration)
+        outputfolder = tmp ++ "/" ++ iterationname
+      liftIO $ createDirectoryIfMissing True outputfolder
+      saveClasses outputfolder clss
+      res <- liftIO $ withCreateProcess (proc cmd (cmdArgs ++ [outputfolder])) $
         \_ _ _ ph -> do
---          ec <- waitForProcess ph
-          threadDelay 1000000
-          maybeCode <- getProcessExitCode ph
+          maybeCode <- timeout (1000 * cfg^.cfgTimeout) (waitForProcess ph)
           case maybeCode of
             Nothing -> do
-                          terminateProcess ph
-                          return True
-            Just ec -> return $ ec == ExitSuccess
---          return $ ec == ExitSuccess
-      liftIO (
+              terminateProcess ph
+              return False
+            Just ec ->
+              return $ ec == ExitSuccess
+      logProgress cfg iterationname clss
+      liftIO $
         if (cfg^.cfgKeepTempFolder) then
           putStrLn tmp
         else do
           removeDirectoryRecursive tmp
-        )
       return res
-    _ -> return True
-
 
 runJReduce :: Config -> IO ()
 runJReduce cfg = do
@@ -184,38 +196,45 @@ runJReduce cfg = do
 
   handleFailedToLoad errs
 
+
   void . flip runClassPoolT st $ do
     clss <- allClassNames
-    logProgress cfg "-"
-
+    logProgress cfg "-" clss
 
     forM_ (cfg^.cfgReductions) $ \red ->
           case red of
             "ddmin" ->
               do
-                minVec <- ddmin (runProperty cfg) clss
-                forM_ clss $ \c ->
-                  unless (c `L.elem` minVec)  (deleteClass c)
-                logProgress cfg "ddmin"
+                property <- createPropertyRunner cfg "ddmin"
+                minVec <- ddmin property clss
+                onlyClasses minVec
+                logProgress cfg "ddmin" =<< allClassNames
+            "gddmin" ->
+              do
+                property <- createPropertyRunner cfg "gddmin"
+                gr <- mkClassGraph clss
+                minVec <- gddmin property gr
+                onlyClasses minVec
+                logProgress cfg "gddmin" =<< allClassNames
+            "gdd" ->
+              do
+                property <- createPropertyRunner cfg "gdd"
+                gr <- mkClassGraph clss
+                minVec <- igdd property gr
+                onlyClasses minVec
+                logProgress cfg "gdd" =<< allClassNames
             "intf" ->
               do
                 reduceInterfaces
-                logProgress cfg "reduce-interface"
+                logProgress cfg "reduce-interface" =<< allClassNames
             "closure" ->
               do
                 (found, missing) <- computeClassClosure (cfg^.cfgClasses)
-
                 forM_ clss $ \c ->
                   unless (c `S.member` found)  (deleteClass c)
-                logProgress cfg "class-closure"
+                logProgress cfg "class-closure" =<< allClassNames
             _ ->
               liftIO $ print "wrong reducer"
-    liftIO $ print "all classes:"
-    liftIO $ print clss
-    curent <- allClassNames
-    liftIO $ print "reduced classes"
-    liftIO $ print curent
-
   where
     handleFailedToLoad [] = return ()
     handleFailedToLoad errs = do

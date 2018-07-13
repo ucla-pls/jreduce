@@ -1,0 +1,2 @@
+#/usr/bin/env bash
+java -cp $2 $1
