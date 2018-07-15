@@ -32,22 +32,28 @@ patterns :: Docopt
 patterns = [docopt|
 jreduce version 0.0.1
 
+Jreduce is a tool that can reduce a java program to a smaller program.
+If a property have been specified then jreduce will try to reduce to
+the smallest program that still uphold the property.
+
 Usage:
   jreduce ( -h | --help )
-  jreduce [options] [-c <core>...] [-o <output>] [<property>...]
+  jreduce [options] [-c <core>...]
+  jreduce [options] [-c <core>...] <reductor> [<property>...]
 
 Options:
   --cp <classpath>        The classpath to search for classess
   --stdlib                Also include the stdlib (Don't do this)
   --jre <jre>             The location of the stdlib
   -W, --warn              Warn about missing classes to the stderr
-  -r <reduction>          Reduections
+  -o, --output <output>   Output folder or jar
   --progress <progress>   A file that will contain csv data for each
                           interation of the program
   -c, --core <core>       The core classes, that should not be removed
   --tmp <tmp>             The tempfolder default is the system tmp folder
   -K, --keep              Keep temporary folders around
-  -t, --timout <timeout>  Timeout in miliseconds, default is (1000)
+  -t, --timout <timeout>  Timeout in miliseconds, default is 1000 ms
+  -v                      Be more verbose
 |]
 
 -- | The config file dictates the execution of the program
@@ -57,7 +63,8 @@ data Config = Config
   , _cfgClasses        :: S.Set ClassName
   , _cfgUseStdlib      :: Bool
   , _cfgWarn           :: Bool
-  , _cfgReductions     :: [String]
+  , _cfgVerbose        :: Int
+  , _cfgReductor       :: Maybe String
   , _cfgTempFolder     :: FilePath
   , _cfgJre            :: Maybe FilePath
   , _cfgProgressFile   :: Maybe FilePath
@@ -75,7 +82,6 @@ parseConfig :: Arguments -> IO Config
 parseConfig args = do
   classnames <- readClassNames
   tmpfolder <- getCanonicalTemporaryDirectory
-  reductions <- splitReductions
   return $ Config
     { _cfgClassPath =
         case concatMap splitClassPath $ getAllArgs args (longOption "cp") of
@@ -84,9 +90,10 @@ parseConfig args = do
     , _cfgOutput = getArg args (shortOption 'o')
     , _cfgClasses = classnames
     , _cfgWarn = isPresent args (longOption "warn")
-    , _cfgReductions = reductions
+    , _cfgReductor = getArg args (argument "reductor")
     , _cfgUseStdlib = isPresent args (longOption "stdlib")
     , _cfgJre = getArg args (longOption "jre")
+    , _cfgVerbose = getArgCount args (shortOption 'v')
     , _cfgProgressFile = getArg args (longOption "progress")
     , _cfgProperty = getAllArgs args (argument "property")
     , _cfgTempFolder = getArgWithDefault args tmpfolder (longOption "tmp")
@@ -96,18 +103,91 @@ parseConfig args = do
 
   where
     classnames' = getAllArgs args $ longOption "core"
+    readClassNames :: IO (S.Set ClassName)
     readClassNames = do
-      -- names <-
-      --   if isPresent args (command "-")
-      --   then do (classnames' ++) . lines <$> getContents
-      --   else return classnames'
-      return . S.fromList . map strCls $ classnames'
-    splitReductions = do
-      case getArg args (shortOption 'r') of
-        Nothing -> return []
-        Just s  -> return $ splitOn ":" s
+      names <- fmap concat . forM classnames' $ \cn ->
+        case cn of
+          '@':filename -> lines <$> readFile filename
+          _ -> return [cn]
+      return . S.fromList . map strCls $ names
+    -- splitReductions = do
+    --   case getArg args (shortOption 'r') of
+    --     Nothing -> return []
+    --     Just s  -> return $ splitOn ":" s
 
 
+runJReduce :: Config -> IO ()
+runJReduce cfg = do
+  info "Preloading classes ..."
+  classreader <- preload =<< createClassLoader cfg
+  cnt <- length <$> classes classreader
+  info $ "Found " ++ show cnt ++ " classes."
+
+  setupProgress cfg
+
+  void . flip runCachedClassPool classreader $ do
+    info "Running class closure ..."
+    (found, missing) <- computeClassClosure $ cfg^.cfgClasses
+    info $ "Found " ++ show (S.size found) ++ " required classes and "
+           ++ show (S.size missing) ++ " missing classes."
+    case cfg^.cfgReductor of
+      Just red -> do
+        property <- createPropertyRunner cfg red
+        let prop = property . (S.toList found ++)
+        clss <- allClassNames
+        gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
+        keep <- (S.toList found ++) <$> case red of
+          "gddmin" -> gddmin prop gr
+          "gdd" -> igdd prop gr
+        onlyClasses keep
+        logProgress cfg red =<< allClassNames
+      Nothing ->
+        cachedOnlyClasses' found
+
+    case cfg^.cfgOutput of
+      Just fp -> do
+        info "Saving classes..."
+        saveAllClasses fp
+        info "Done."
+      Nothing ->
+        info "Doing nothing..."
+
+  where
+    handleFailedToLoad [] = return ()
+    handleFailedToLoad errs = do
+      hPutStrLn stderr "Could not load the following classes"
+      mapM_ (\e -> hPutStr stderr "  - " >> hPutStrLn stderr (show e)) errs
+
+    info :: MonadIO m => String -> m ()
+    info =
+      when (cfg^.cfgVerbose > 0) .
+        liftIO . hPutStrLn stderr
+
+main :: IO ()
+main = do
+  args' <- parseArgs patterns <$> getArgs
+  case args' of
+    Right args
+      | isPresent args (longOption "help")
+        || isPresent args (shortOption 'h') ->
+          exitWithUsage patterns
+      | otherwise -> do
+          cfg <- parseConfig args
+          runJReduce cfg
+    Left msg -> do
+      print msg
+
+-- | Create a class loader from the config
+createClassLoader :: Config -> IO ClassLoader
+createClassLoader cfg
+  | cfg ^. cfgUseStdlib =
+    case cfg ^. cfgJre of
+      Nothing ->
+        fromClassPath (cfg ^. cfgClassPath)
+      Just jre ->
+        fromJreFolder (cfg ^. cfgClassPath) jre
+  | otherwise =
+    return $ ClassLoader [] [] (cfg ^. cfgClassPath)
 
 setupProgress :: Config -> IO ()
 setupProgress cfg =
@@ -187,82 +267,3 @@ createPropertyRunner cfg name =
         else do
           removeDirectoryRecursive tmp
       return res
-
-runJReduce :: Config -> IO ()
-runJReduce cfg = do
-  classreader <- preload =<< createClassLoader cfg
-  setupProgress cfg
-  (errs, st) <- loadClassPoolState classreader
-
-  handleFailedToLoad errs
-
-
-  void . flip runClassPoolT st $ do
-    clss <- allClassNames
-    logProgress cfg "-" clss
-
-    forM_ (cfg^.cfgReductions) $ \red ->
-          case red of
-            "ddmin" ->
-              do
-                property <- createPropertyRunner cfg "ddmin"
-                minVec <- ddmin property clss
-                onlyClasses minVec
-                logProgress cfg "ddmin" =<< allClassNames
-            "gddmin" ->
-              do
-                property <- createPropertyRunner cfg "gddmin"
-                gr <- mkClassGraph clss
-                minVec <- gddmin property gr
-                onlyClasses minVec
-                logProgress cfg "gddmin" =<< allClassNames
-            "gdd" ->
-              do
-                property <- createPropertyRunner cfg "gdd"
-                gr <- mkClassGraph clss
-                minVec <- igdd property gr
-                onlyClasses minVec
-                logProgress cfg "gdd" =<< allClassNames
-            "intf" ->
-              do
-                reduceInterfaces
-                logProgress cfg "reduce-interface" =<< allClassNames
-            "closure" ->
-              do
-                (found, missing) <- computeClassClosure (cfg^.cfgClasses)
-                forM_ clss $ \c ->
-                  unless (c `S.member` found)  (deleteClass c)
-                logProgress cfg "class-closure" =<< allClassNames
-            _ ->
-              liftIO $ print "wrong reducer"
-  where
-    handleFailedToLoad [] = return ()
-    handleFailedToLoad errs = do
-      hPutStrLn stderr "Could not load the following classes"
-      mapM_ (\e -> hPutStr stderr "  - " >> hPutStrLn stderr (show e)) errs
-
-main :: IO ()
-main = do
-  args' <- parseArgs patterns <$> getArgs
-  case args' of
-    Right args
-      | isPresent args (longOption "help")
-        || isPresent args (shortOption 'h') ->
-          exitWithUsage patterns
-      | otherwise -> do
-          cfg <- parseConfig args
-          runJReduce cfg
-    Left msg -> do
-      print msg
-
--- | Create a class loader from the config
-createClassLoader :: Config -> IO ClassLoader
-createClassLoader cfg
-  | cfg ^. cfgUseStdlib =
-    case cfg ^. cfgJre of
-      Nothing ->
-        fromClassPath (cfg ^. cfgClassPath)
-      Just jre ->
-        fromJreFolder (cfg ^. cfgClassPath) jre
-  | otherwise =
-    return $ ClassLoader [] [] (cfg ^. cfgClassPath)
