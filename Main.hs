@@ -135,10 +135,16 @@ runJReduce cfg = do
         property <- createPropertyRunner cfg red
         let prop = property . (S.toList found ++)
         clss <- allClassNames
-        gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
         keep <- (S.toList found ++) <$> case red of
-          "gddmin" -> gddmin prop gr
-          "gdd" -> igdd prop gr
+          "ddmin" ->
+            ddmin prop clss
+          "gddmin" -> do
+            gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
+            gddmin prop gr
+          "gdd" -> do
+            gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
+            igdd prop gr
+          _ -> error $ "Unknown reductor " ++ show red
         onlyClasses keep
         logProgress cfg red =<< allClassNames
       Nothing ->
