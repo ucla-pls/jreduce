@@ -11,6 +11,8 @@ import qualified Data.Vector           as V
 import qualified Data.Text             as Text
 import qualified Data.Text.IO          as Text
 import           Data.List.Split
+import           Data.Time
+import           Data.Time.Clock.POSIX
 import           System.Console.Docopt
 import           System.Directory
 import           System.Environment    (getArgs)
@@ -38,22 +40,22 @@ the smallest program that still uphold the property.
 
 Usage:
   jreduce ( -h | --help )
-  jreduce [options] [-c <core>...]
-  jreduce [options] [-c <core>...] <reductor> [<property>...]
+  jreduce [options] [<property>...]
 
 Options:
-  --cp <classpath>        The classpath to search for classess
-  --stdlib                Also include the stdlib (Don't do this)
-  --jre <jre>             The location of the stdlib
-  -W, --warn              Warn about missing classes to the stderr
-  -o, --output <output>   Output folder or jar
-  --progress <progress>   A file that will contain csv data for each
-                          interation of the program
-  -c, --core <core>       The core classes, that should not be removed
-  --tmp <tmp>             The tempfolder default is the system tmp folder
-  -K, --keep              Keep temporary folders around
-  -t, --timout <timeout>  Timeout in miliseconds, default is 1000 ms
-  -v                      Be more verbose
+  --cp <classpath>          The classpath to search for classess
+  --stdlib                  Also include the stdlib (Don't do this)
+  --jre <jre>               The location of the stdlib
+  -W, --warn                Warn about missing classes to the stderr
+  -o, --output <output>     Output folder or jar
+  -r, --reductor <reductor> Reductor
+  --progress <progress>     A file that will contain csv data for each
+                            interation of the program
+  -c, --core <core>         The core classes, that should not be removed
+  --tmp <tmp>               The tempfolder default is the system tmp folder
+  -K, --keep                Keep temporary folders around
+  -t, --timout <timeout>    Timeout in miliseconds, default is 1000 ms
+  -v                        Be more verbose
 |]
 
 -- | The config file dictates the execution of the program
@@ -64,7 +66,7 @@ data Config = Config
   , _cfgUseStdlib      :: Bool
   , _cfgWarn           :: Bool
   , _cfgVerbose        :: Int
-  , _cfgReductor       :: Maybe String
+  , _cfgReductor       :: String
   , _cfgTempFolder     :: FilePath
   , _cfgJre            :: Maybe FilePath
   , _cfgProgressFile   :: Maybe FilePath
@@ -90,7 +92,7 @@ parseConfig args = do
     , _cfgOutput = getArg args (shortOption 'o')
     , _cfgClasses = classnames
     , _cfgWarn = isPresent args (longOption "warn")
-    , _cfgReductor = getArg args (argument "reductor")
+    , _cfgReductor = getArgWithDefault args "gdd" (longOption "reductor")
     , _cfgUseStdlib = isPresent args (longOption "stdlib")
     , _cfgJre = getArg args (longOption "jre")
     , _cfgVerbose = getArgCount args (shortOption 'v')
@@ -116,47 +118,138 @@ parseConfig args = do
     --     Just s  -> return $ splitOn ":" s
 
 
+type Property m = (String -> [ClassName] -> m Bool)
+
+setupProperty ::
+  (MonadClassPool m, MonadIO m)
+  => Config
+  -> m (Property m)
+setupProperty cfg = do
+  case cfg^.cfgProgressFile of
+    Just pf ->
+      liftIO . withFile pf WriteMode $ \h -> do
+        hPutStrLn h "step,time,classes,interfaces,impls,methods,success"
+    Nothing ->
+      return ()
+  case cfg^.cfgProperty of
+    cmd:cmdArgs -> do
+      tmp <- liftIO $ do
+        createDirectoryIfMissing True (cfg^.cfgTempFolder)
+        createTempDirectory (cfg^.cfgTempFolder) "jreduce"
+      sem <- liftIO $ newMVar 0
+      return $ runProperty cmd cmdArgs tmp sem
+    _ ->
+      return $ const (const (return True))
+  where
+    pad m c xs = replicate (m - length xs) c ++ xs
+
+    -- runProperty :: String -> [String] -> FilePath -> MVar Int -> Property m
+    runProperty cmd cmdArgs tmp sem name clss = do
+      iteration <- liftIO $ modifyMVar sem (\i -> return (i + 1, i))
+      let
+        iterationname = name -- ++ "-" ++ pad 8 '0' (show iteration)
+        outputfolder = tmp ++ "/" ++ iterationname
+      liftIO $ createDirectoryIfMissing True outputfolder
+      saveClasses outputfolder clss
+      res <- liftIO $ withCreateProcess (proc cmd (cmdArgs ++ [outputfolder])) $
+        \_ _ _ ph -> do
+          maybeCode <- timeout (1000 * cfg^.cfgTimeout) (waitForProcess ph)
+          case maybeCode of
+            Nothing -> do
+              terminateProcess ph
+              return False
+            Just ec ->
+              return $ ec == ExitSuccess
+      logProgress cfg iterationname clss res
+      liftIO $
+        if (cfg^.cfgKeepTempFolder) then
+          putStrLn tmp
+        else do
+          removeDirectoryRecursive tmp
+      return res
+
+    logProgress cfg name clss succ =
+      case cfg^.cfgProgressFile of
+        Just pf -> do
+          let numClss = length clss
+          (Sum numInterfaces, Sum numImpls, Sum numMethods) <-
+            clss ^! folded.pool._Just.to (
+              \cls -> ( Sum (if isInterface cls then 1 :: Int else 0)
+                      , Sum (cls^.classInterfaces.to length)
+                      , Sum (cls^.classMethods.to length)
+                      ))
+          liftIO $ do
+            time <- getPOSIXTime
+            withFile pf AppendMode $ \h -> do
+              hPutStrLn h $ L.intercalate ","
+                [ name
+                , show $ time
+                , show $ numClss
+                , show $ numInterfaces
+                , show $ numImpls
+                , show $ numMethods
+                , show $ succ
+                ]
+        Nothing ->
+          return ()
+
+classClosure ::
+  (MonadClassPool m, MonadIO m)
+  => Config
+  -> Property m
+  -> m ()
+classClosure cfg property = do
+  info cfg "Running class closure ..."
+  (found, missing) <- computeClassClosure $ cfg^.cfgClasses
+  info cfg $ "Found " ++ show (S.size found) ++ " required classes and "
+          ++ show (S.size missing) ++ " missing classes."
+
+  b <- property "class-closure" (S.toList found)
+  if b
+    then
+      onlyClasses found
+    else do
+      let red = cfg^.cfgReductor
+          prop = property red . (S.toList found ++)
+      clss <- allClassNames
+      keep <- (S.toList found ++) <$> case cfg^.cfgReductor of
+        "ddmin" ->
+          ddmin prop clss
+        "gddmin" -> do
+          gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
+          gddmin prop gr
+        "gdd" -> do
+          gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
+          igdd prop gr
+        _ -> error $ "Unknown reductor " ++ show red
+      onlyClasses keep
+
 runJReduce :: Config -> IO ()
 runJReduce cfg = do
-  info "Preloading classes ..."
+  info cfg "Preloading classes ..."
   classreader <- preload =<< createClassLoader cfg
   cnt <- length <$> classes classreader
-  info $ "Found " ++ show cnt ++ " classes."
+  info cfg $ "Found " ++ show cnt ++ " classes."
 
-  setupProgress cfg
 
   void . flip runCachedClassPool classreader $ do
-    info "Running class closure ..."
-    (found, missing) <- computeClassClosure $ cfg^.cfgClasses
-    info $ "Found " ++ show (S.size found) ++ " required classes and "
-           ++ show (S.size missing) ++ " missing classes."
-    case cfg^.cfgReductor of
-      Just red -> do
-        property <- createPropertyRunner cfg red
-        let prop = property . (S.toList found ++)
-        clss <- allClassNames
-        keep <- (S.toList found ++) <$> case red of
-          "ddmin" ->
-            ddmin prop clss
-          "gddmin" -> do
-            gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
-            gddmin prop gr
-          "gdd" -> do
-            gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
-            igdd prop gr
-          _ -> error $ "Unknown reductor " ++ show red
-        onlyClasses keep
-        logProgress cfg red =<< allClassNames
-      Nothing ->
-        cachedOnlyClasses' found
+    property <- setupProperty cfg
+
+    -- Test if the property have been correctly setup
+    b <- property "initial" =<< allClassNames
+    when (not b) $ fail "property failed on initial classpath"
+
+    -- Run the class closure
+    classClosure cfg property
 
     case cfg^.cfgOutput of
       Just fp -> do
-        info "Saving classes..."
+        info cfg "Saving classes..."
+        property "saved" =<< allClassNames
         saveAllClasses fp
-        info "Done."
+        info cfg "Done."
       Nothing ->
-        info "Doing nothing..."
+        info cfg "Doing nothing..."
 
   where
     handleFailedToLoad [] = return ()
@@ -164,10 +257,10 @@ runJReduce cfg = do
       hPutStrLn stderr "Could not load the following classes"
       mapM_ (\e -> hPutStr stderr "  - " >> hPutStrLn stderr (show e)) errs
 
-    info :: MonadIO m => String -> m ()
-    info =
-      when (cfg^.cfgVerbose > 0) .
-        liftIO . hPutStrLn stderr
+info :: MonadIO m => Config -> String -> m ()
+info cfg =
+  when (cfg^.cfgVerbose > 0) .
+    liftIO . hPutStrLn stderr
 
 main :: IO ()
 main = do
@@ -195,81 +288,3 @@ createClassLoader cfg
   | otherwise =
     return $ ClassLoader [] [] (cfg ^. cfgClassPath)
 
-setupProgress :: Config -> IO ()
-setupProgress cfg =
-  case cfg^.cfgProgressFile of
-    Just pf ->
-      withFile pf WriteMode $ \h -> do
-        hPutStrLn h "step,classes,interfaces,impls,methods"
-    Nothing ->
-      return ()
-
-logProgress ::
-  forall m t. (MonadClassPool m, MonadIO m, Foldable t)
-  => Config
-  -> String
-  -> t ClassName
-  -> m ()
-logProgress cfg name clss =
-  case cfg^.cfgProgressFile of
-    Just pf -> do
-      let numClss = length clss
-      (Sum numInterfaces, Sum numImpls, Sum numMethods) <-
-        clss ^! folded.pool._Just.to (
-          \cls -> ( Sum (if isInterface cls then 1 :: Int else 0)
-                  , Sum (cls^.classInterfaces.to length)
-                  , Sum (cls^.classMethods.to length)
-                  ))
-      liftIO $ withFile pf AppendMode $ \h -> do
-        hPutStrLn h $ L.intercalate ","
-          [ name
-          , show $ numClss
-          , show $ numInterfaces
-          , show $ numImpls
-          , show $ numMethods
-          ]
-    Nothing ->
-      return ()
-
-
-createPropertyRunner ::
-  forall m t. (MonadClassPool m, MonadIO m, Foldable t)
-  => Config
-  -> String
-  -> m (t ClassName -> m Bool)
-createPropertyRunner cfg name =
-  case cfg^.cfgProperty of
-    cmd:cmdArgs -> do
-      tmp <- liftIO $ do
-        createDirectoryIfMissing True (cfg^.cfgTempFolder)
-        createTempDirectory (cfg^.cfgTempFolder) "jreduce"
-      sem <- liftIO $ newMVar 0
-      return $ runProperty cmd cmdArgs tmp sem
-    _ ->
-      return $ const (return True)
-  where
-    pad m c xs = replicate (m - length xs) c ++ xs
-    runProperty :: String -> [String] -> FilePath -> MVar Int -> t ClassName -> m Bool
-    runProperty cmd cmdArgs tmp sem clss = do
-      iteration <- liftIO $ modifyMVar sem (\i -> return (i + 1, i))
-      let
-        iterationname = name ++ "-" ++ pad 8 '0' (show iteration)
-        outputfolder = tmp ++ "/" ++ iterationname
-      liftIO $ createDirectoryIfMissing True outputfolder
-      saveClasses outputfolder clss
-      res <- liftIO $ withCreateProcess (proc cmd (cmdArgs ++ [outputfolder])) $
-        \_ _ _ ph -> do
-          maybeCode <- timeout (1000 * cfg^.cfgTimeout) (waitForProcess ph)
-          case maybeCode of
-            Nothing -> do
-              terminateProcess ph
-              return False
-            Just ec ->
-              return $ ec == ExitSuccess
-      logProgress cfg iterationname clss
-      liftIO $
-        if (cfg^.cfgKeepTempFolder) then
-          putStrLn tmp
-        else do
-          removeDirectoryRecursive tmp
-      return res

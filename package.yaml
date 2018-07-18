@@ -27,6 +27,7 @@ dependencies:
   - temporary
   - vector
   - split
+  - time
 
 executables:
   jreduce:
