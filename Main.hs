@@ -26,6 +26,9 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 
 import           Control.Lens          hiding (argument)
+
+import Debug.Trace
+
 import           Jvmhs
 import           Jvmhs.Analysis.Reduce
 import           Control.Concurrent
@@ -150,7 +153,9 @@ setupProperty cfg = do
         iterationname = name -- ++ "-" ++ pad 8 '0' (show iteration)
         outputfolder = tmp ++ "/" ++ iterationname
       liftIO $ createDirectoryIfMissing True outputfolder
+      info cfg $ "saving classes to " ++ outputfolder
       saveClasses outputfolder clss
+      info cfg $ "running property..."
       res <- liftIO $ withCreateProcess (proc cmd (cmdArgs ++ [outputfolder])) $
         \_ _ _ ph -> do
           maybeCode <- timeout (1000 * cfg^.cfgTimeout) (waitForProcess ph)
@@ -160,6 +165,7 @@ setupProperty cfg = do
               return False
             Just ec ->
               return $ ec == ExitSuccess
+      info cfg $ "done, property was " ++ show res
       logProgress cfg iterationname clss res
       liftIO $
         if (cfg^.cfgKeepTempFolder) then
@@ -212,7 +218,7 @@ classClosure cfg property = do
       let red = cfg^.cfgReductor
           prop = property red . (S.toList found ++)
       clss <- allClassNames
-      keep <- (S.toList found ++) <$> case cfg^.cfgReductor of
+      keep <- (S.toList found ++) <$> case red of
         "ddmin" ->
           ddmin prop clss
         "gddmin" -> do
@@ -230,7 +236,6 @@ runJReduce cfg = do
   classreader <- preload =<< createClassLoader cfg
   cnt <- length <$> classes classreader
   info cfg $ "Found " ++ show cnt ++ " classes."
-
 
   void . flip runCachedClassPool classreader $ do
     property <- setupProperty cfg
