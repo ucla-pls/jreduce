@@ -27,7 +27,7 @@ import           Control.Monad.IO.Class
 
 import           Control.Lens          hiding (argument)
 
-import Debug.Trace
+-- import Debug.Trace
 
 import           Jvmhs
 import           Jvmhs.Analysis.Reduce
