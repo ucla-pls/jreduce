@@ -7,6 +7,7 @@ module Main where
 import qualified Data.List             as L
 import           Data.Monoid
 import qualified Data.Set              as S
+import qualified Data.Map              as M
 import qualified Data.Vector           as V
 import qualified Data.Text             as Text
 import qualified Data.Text.IO          as Text
@@ -43,7 +44,7 @@ the smallest program that still uphold the property.
 
 Usage:
   jreduce ( -h | --help )
-  jreduce [options] [<property>...]
+  jreduce [-v | -vv | -vvv] [options] [<property>...]
 
 Options:
   --cp <classpath>          The classpath to search for classess
@@ -121,7 +122,7 @@ parseConfig args = do
     --     Just s  -> return $ splitOn ":" s
 
 
-type Property m = (String -> [ClassName] -> m Bool)
+type Property m = (String -> m Bool)
 
 setupProperty ::
   (MonadClassPool m, MonadIO m)
@@ -142,31 +143,36 @@ setupProperty cfg = do
       sem <- liftIO $ newMVar 0
       return $ runProperty cmd cmdArgs tmp sem
     _ ->
-      return $ const (const (return True))
+      return $ const (return True)
   where
     pad m c xs = replicate (m - length xs) c ++ xs
 
     -- runProperty :: String -> [String] -> FilePath -> MVar Int -> Property m
-    runProperty cmd cmdArgs tmp sem name clss = do
+    runProperty cmd cmdArgs tmp sem name = do
       iteration <- liftIO $ modifyMVar sem (\i -> return (i + 1, i))
       let
         iterationname = name -- ++ "-" ++ pad 8 '0' (show iteration)
         outputfolder = tmp ++ "/" ++ iterationname
       liftIO $ createDirectoryIfMissing True outputfolder
-      info cfg $ "saving classes to " ++ outputfolder
-      saveClasses outputfolder clss
-      info cfg $ "running property..."
-      res <- liftIO $ withCreateProcess (proc cmd (cmdArgs ++ [outputfolder])) $
-        \_ _ _ ph -> do
-          maybeCode <- timeout (1000 * cfg^.cfgTimeout) (waitForProcess ph)
-          case maybeCode of
-            Nothing -> do
-              terminateProcess ph
-              return False
-            Just ec ->
-              return $ ec == ExitSuccess
-      info cfg $ "done, property was " ++ show res
-      logProgress cfg iterationname clss res
+      time cfg ("Saving classes to " ++ outputfolder) $
+        saveAllClasses outputfolder
+      res <- time cfg "Running property" . liftIO $
+         withCreateProcess (
+           (proc cmd (cmdArgs ++ [outputfolder]))
+              { std_in = NoStream
+              , std_out = if cfg^.cfgVerbose > 1 then Inherit else NoStream
+              , std_err = if cfg^.cfgVerbose > 1 then Inherit else NoStream
+              }) $
+            \_ _ _ ph -> do
+              maybeCode <- timeout (1000 * cfg^.cfgTimeout) (waitForProcess ph)
+              case maybeCode of
+                Nothing -> do
+                  terminateProcess ph
+                  return False
+                Just ec ->
+                  return $ ec == ExitSuccess
+      info cfg $ "Property was " ++ show res
+      logProgress cfg iterationname res
       liftIO $
         if (cfg^.cfgKeepTempFolder) then
           putStrLn tmp
@@ -174,22 +180,22 @@ setupProperty cfg = do
           removeDirectoryRecursive tmp
       return res
 
-    logProgress cfg name clss succ =
+    logProgress cfg name succ =
       case cfg^.cfgProgressFile of
         Just pf -> do
+          clss <- allClasses
           let numClss = length clss
-          (Sum numInterfaces, Sum numImpls, Sum numMethods) <-
-            clss ^! folded.pool._Just.to (
-              \cls -> ( Sum (if isInterface cls then 1 :: Int else 0)
-                      , Sum (cls^.classInterfaces.to length)
-                      , Sum (cls^.classMethods.to length)
-                      ))
+              (Sum numInterfaces, Sum numImpls, Sum numMethods) =
+                foldMap (\cls -> ( Sum (if isInterface cls then 1 :: Int else 0)
+                          , Sum (cls^.classInterfaces.to S.size)
+                          , Sum (cls^.classMethods.to M.size)
+                          )) clss
           liftIO $ do
             time <- getPOSIXTime
             withFile pf AppendMode $ \h -> do
               hPutStrLn h $ L.intercalate ","
                 [ name
-                , show $ time
+                , show $ (realToFrac time :: Double)
                 , show $ numClss
                 , show $ numInterfaces
                 , show $ numImpls
@@ -205,18 +211,19 @@ classClosure ::
   -> Property m
   -> m ()
 classClosure cfg property = do
-  info cfg "Running class closure ..."
-  (found, missing) <- computeClassClosure $ cfg^.cfgClasses
+  (found, missing) <-
+    time cfg "Running class closure" $
+      computeClassClosure $ cfg^.cfgClasses
   info cfg $ "Found " ++ show (S.size found) ++ " required classes and "
           ++ show (S.size missing) ++ " missing classes."
 
-  b <- property "class-closure" (S.toList found)
+  b <- cproperty "class-closure" found
   if b
     then
       onlyClasses found
     else do
       let red = cfg^.cfgReductor
-          prop = property red . (S.toList found ++)
+          prop = cproperty red . (S.toList found ++)
       clss <- allClassNames
       keep <- (S.toList found ++) <$> case red of
         "ddmin" ->
@@ -230,10 +237,78 @@ classClosure cfg property = do
         _ -> error $ "Unknown reductor " ++ show red
       onlyClasses keep
 
+  void $ property "after-class-closure"
+  where
+    cproperty name clss =
+      cplocal $ do
+        onlyClasses clss
+        property name
+
+methodClosure ::
+  (MonadClassPool m, MonadIO m)
+  => Config
+  -> Property m
+  -> m ()
+methodClosure cfg property = do
+  info cfg "Running method closure ..."
+  hry <- time cfg "Calculate hierarchy" $
+     calculateHierarchy =<< allClassNames
+
+  clss <- allClasses
+  mths <- clss ^!! folded . classMethodIds
+
+  rmths <- time cfg "Finding required methods" $
+    filterM (isMethodRequired hry) mths
+
+  info cfg $ "Found " ++ show (length rmths) ++ "/"
+      ++ show (length mths) ++ " required methods"
+
+  found <-
+    time cfg "Compute method closure" $
+     computeMethodClosure hry (S.fromList rmths)
+
+  info cfg $ "Found " ++ show (S.size found) ++ " required methods after closure"
+
+  b <- mproperty "method-closure" found
+  if b
+    then
+       reduceto found
+    else do
+      let red = cfg^.cfgReductor
+          prop = mproperty red . (S.toList found ++)
+      keep <- (S.toList found ++) <$> case red of
+        "ddmin" ->
+          ddmin prop mths
+        "gddmin" -> do
+          gr <- mkCallGraph hry (S.toList $ S.fromList mths `S.difference` found)
+          gddmin prop gr
+        "gdd" -> do
+          gr <- mkCallGraph hry (S.toList $ S.fromList mths `S.difference` found)
+          igdd prop gr
+        _ -> error $ "Unknown reductor " ++ show red
+      reduceto keep
+
+  void $ property "after-method-closure"
+  where
+    reduceto methods = do
+      let clsmp = M.fromListWith (S.union)
+            $ methods ^.. folded
+            . to (\c -> (c^.inClassName, S.singleton $ c ^.inId ))
+      modifyClasses $ \c ->
+        let methods = clsmp ^. at (c^.className) . folded in
+        Just (c & classMethods %~ flip M.restrictKeys methods)
+
+    mproperty name methods = do
+      cplocal $ do
+        reduceto methods
+        property name
+
 runJReduce :: Config -> IO ()
 runJReduce cfg = do
-  info cfg "Preloading classes ..."
-  classreader <- preload =<< createClassLoader cfg
+
+  classreader <- time cfg "Preloading classes ..." $
+    preload =<< createClassLoader cfg
+
   cnt <- length <$> classes classreader
   info cfg $ "Found " ++ show cnt ++ " classes."
 
@@ -241,18 +316,20 @@ runJReduce cfg = do
     property <- setupProperty cfg
 
     -- Test if the property have been correctly setup
-    b <- property "initial" =<< allClassNames
+    b <- property "initial"
     when (not b) $ fail "property failed on initial classpath"
 
     -- Run the class closure
     classClosure cfg property
 
+    -- Run the method closure
+    methodClosure cfg property
+
+    property "final"
     case cfg^.cfgOutput of
       Just fp -> do
-        info cfg "Saving classes..."
-        property "saved" =<< allClassNames
-        saveAllClasses fp
-        info cfg "Done."
+        time cfg "Saving classes..." $
+          saveAllClasses fp
       Nothing ->
         info cfg "Doing nothing..."
 
@@ -267,6 +344,19 @@ info cfg =
   when (cfg^.cfgVerbose > 0) .
     liftIO . hPutStrLn stderr
 
+time :: MonadIO m => Config -> String -> m a -> m a
+time cfg str m
+  | cfg^.cfgVerbose > 0 = do
+    t <- liftIO $ do
+      hPutStr stderr str
+      hPutStr stderr "... "
+      getPOSIXTime
+    a <- m
+    liftIO $ do
+      t' <- getPOSIXTime
+      hPutStrLn stderr $ "done [" ++ show (t' - t) ++ "]"
+    return a
+  | otherwise = m
 main :: IO ()
 main = do
   args' <- parseArgs patterns <$> getArgs
