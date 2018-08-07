@@ -223,7 +223,7 @@ classClosure cfg property = do
       onlyClasses found
     else do
       let red = cfg^.cfgReductor
-          prop = cproperty red . (S.toList found ++)
+          prop = cproperty ("class-closure-" ++ red) . (S.toList found ++)
       clss <- allClassNames
       keep <- (S.toList found ++) <$> case red of
         "ddmin" ->
@@ -257,8 +257,9 @@ methodClosure cfg property = do
   clss <- allClasses
   mths <- clss ^!! folded . classMethodIds
 
-  rmths <- time cfg "Finding required methods" $
-    filterM (isMethodRequired hry) mths
+  -- rmths <- time cfg "Finding required methods" $
+  --   filterM (isMethodRequired hry) mths
+  let rmths = []
 
   info cfg $ "Found " ++ show (length rmths) ++ "/"
       ++ show (length mths) ++ " required methods"
@@ -275,7 +276,7 @@ methodClosure cfg property = do
        reduceto found
     else do
       let red = cfg^.cfgReductor
-          prop = mproperty red . (S.toList found ++)
+          prop = mproperty ("method-closure-" ++ red) . (S.toList found ++)
       keep <- (S.toList found ++) <$> case red of
         "ddmin" ->
           ddmin prop mths
