@@ -13,14 +13,13 @@ output=fernflower
 
 if [ -e "$output" ] 
 then 
-  echo "$output folder alread exist" 
-  exit -1
+    rm -r "$output"
 fi
 
 mkdir -p $output/src $output/classes
 
 
-java -jar $FERNFLOWER $1 $output/src
+java -jar $FERNFLOWER -dgs=1 $1 $output/src
 
 find "$output/src" -name *.jar -exec unzip -d "$output/src" {} \;
 
@@ -28,8 +27,6 @@ find "$output/src" -name *.java > "$output/sourcefiles.txt"
 
 javac -cp "$classpath":"$output/classes" -d "$output/classes" -sourcepath "$output" @"$output/sourcefiles.txt"
 err=$?
-
-rm -r $output
 
 if [ "$err" == "1" ]; then
     exit 0

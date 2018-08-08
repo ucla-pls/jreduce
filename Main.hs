@@ -4,29 +4,33 @@
 {-# LANGUAGE TemplateHaskell     #-}
 module Main where
 
-import qualified Data.List             as L
-import           Data.Monoid
-import qualified Data.Set              as S
-import qualified Data.Map              as M
-import qualified Data.Vector           as V
-import qualified Data.Text             as Text
-import qualified Data.Text.IO          as Text
+import qualified Data.IntSet as IS
+import qualified Data.List as L
 import           Data.List.Split
+import qualified Data.Map as M
+import           Data.Monoid
+import qualified Data.Set as S
+import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
 import           Data.Time
 import           Data.Time.Clock.POSIX
+import qualified Data.Vector as V
+import           Prelude hiding (log)
 import           System.Console.Docopt
 import           System.Directory
-import           System.Environment    (getArgs)
+import           System.Environment (getArgs)
 import           System.Exit
-import           System.Timeout
 import           System.IO
 import           System.IO.Temp
 import           System.Process
+import           System.Timeout
 
 import           Control.Monad
 import           Control.Monad.IO.Class
+import           Control.Monad.Reader.Class
+import           Control.Reduce
 
-import           Control.Lens          hiding (argument)
+import           Control.Lens hiding (argument)
 
 -- import Debug.Trace
 
@@ -62,24 +66,39 @@ Options:
   -v                        Be more verbose
 |]
 
+data ReductorName
+  = DDMin
+  | VerifyDDMin
+  | GraphDDMin
+  deriving (Show, Eq)
+
+parseReductorName str =
+  case str of
+    "ddmin" -> Right DDMin
+    "ddmin:verify" -> Right VerifyDDMin
+    "ddmin:graph" -> Right GraphDDMin
+    _ -> Left $ "Unknown reductor: " ++ str
+
 -- | The config file dictates the execution of the program
 data Config = Config
-  { _cfgClassPath      :: ClassPath
-  , _cfgOutput         :: Maybe FilePath
-  , _cfgClasses        :: S.Set ClassName
-  , _cfgUseStdlib      :: Bool
-  , _cfgWarn           :: Bool
-  , _cfgVerbose        :: Int
-  , _cfgReductor       :: String
-  , _cfgTempFolder     :: FilePath
-  , _cfgJre            :: Maybe FilePath
-  , _cfgProgressFile   :: Maybe FilePath
-  , _cfgProperty       :: [String]
-  , _cfgKeepTempFolder :: Bool
-  , _cfgTimeout        :: Int
+  { _cfgClassPath      :: !ClassPath
+  , _cfgOutput         :: !(Maybe FilePath)
+  , _cfgClasses        :: !(S.Set ClassName)
+  , _cfgUseStdlib      :: !Bool
+  , _cfgWarn           :: !Bool
+  , _cfgVerbose        :: !Int
+  , _cfgReductor       :: !ReductorName
+  , _cfgTempFolder     :: !FilePath
+  , _cfgJre            :: !(Maybe FilePath)
+  , _cfgProgressFile   :: !(Maybe FilePath)
+  , _cfgProperty       :: ![String]
+  , _cfgKeepTempFolder :: !Bool
+  , _cfgTimeout        :: !Int
+  , _cfgLoggingIndent  :: !Int
   } deriving (Show)
 
 makeLenses 'Config
+
 
 getArgOrExit :: Arguments -> Option -> IO String
 getArgOrExit = getArgOrExitWith patterns
@@ -88,7 +107,10 @@ parseConfig :: Arguments -> IO Config
 parseConfig args = do
   classnames <- readClassNames
   tmpfolder <- getCanonicalTemporaryDirectory
-  return $ Config
+  reductor <- case parseReductorName $ getArgWithDefault args "ddmin" (longOption "reductor") of
+    Left err -> error err
+    Right name -> return name
+  return Config
     { _cfgClassPath =
         case concatMap splitClassPath $ getAllArgs args (longOption "cp") of
           [] -> ["."]
@@ -96,7 +118,7 @@ parseConfig args = do
     , _cfgOutput = getArg args (shortOption 'o')
     , _cfgClasses = classnames
     , _cfgWarn = isPresent args (longOption "warn")
-    , _cfgReductor = getArgWithDefault args "gdd" (longOption "reductor")
+    , _cfgReductor = reductor
     , _cfgUseStdlib = isPresent args (longOption "stdlib")
     , _cfgJre = getArg args (longOption "jre")
     , _cfgVerbose = getArgCount args (shortOption 'v')
@@ -105,6 +127,7 @@ parseConfig args = do
     , _cfgTempFolder = getArgWithDefault args tmpfolder (longOption "tmp")
     , _cfgKeepTempFolder = isPresent args (longOption "keep")
     , _cfgTimeout = read $ getArgWithDefault args "1000" (longOption "timeout")
+    , _cfgLoggingIndent = 0
     }
 
   where
@@ -125,14 +148,13 @@ parseConfig args = do
 type Property m = (String -> m Bool)
 
 setupProperty ::
-  (MonadClassPool m, MonadIO m)
-  => Config
-  -> m (Property m)
-setupProperty cfg = do
+  (MonadClassPool m, MonadIO m, MonadReader Config m)
+  => m (Property m)
+setupProperty = do
+  cfg <- ask
   case cfg^.cfgProgressFile of
     Just pf ->
-      liftIO . withFile pf WriteMode $ \h -> do
-        hPutStrLn h "step,time,classes,interfaces,impls,methods,success"
+      liftIO . writeFile pf $ "step,time,classes,interfaces,impls,methods,success\n"
     Nothing ->
       return ()
   case cfg^.cfgProperty of
@@ -144,19 +166,21 @@ setupProperty cfg = do
       return $ runProperty cmd cmdArgs tmp sem
     _ ->
       return $ const (return True)
+
   where
     pad m c xs = replicate (m - length xs) c ++ xs
 
     -- runProperty :: String -> [String] -> FilePath -> MVar Int -> Property m
-    runProperty cmd cmdArgs tmp sem name = do
+    runProperty cmd cmdArgs tmp sem name = time "Running property" $ do
+      cfg <- ask
       iteration <- liftIO $ modifyMVar sem (\i -> return (i + 1, i))
       let
         iterationname = name -- ++ "-" ++ pad 8 '0' (show iteration)
         outputfolder = tmp ++ "/" ++ iterationname
       liftIO $ createDirectoryIfMissing True outputfolder
-      time cfg ("Saving classes to " ++ outputfolder) $
+      time ("Saving classes to " ++ outputfolder) $
         saveAllClasses outputfolder
-      res <- time cfg "Running property" . liftIO $
+      res <- time "Invoking property" . liftIO $
          withCreateProcess (
            (proc cmd (cmdArgs ++ [outputfolder]))
               { std_in = NoStream
@@ -171,12 +195,12 @@ setupProperty cfg = do
                   return False
                 Just ec ->
                   return $ ec == ExitSuccess
-      info cfg $ "Property was " ++ show res
+      info $ "Property was " ++ show res
       logProgress cfg iterationname res
       liftIO $
-        if (cfg^.cfgKeepTempFolder) then
+        if cfg^.cfgKeepTempFolder then
           putStrLn tmp
-        else do
+        else
           removeDirectoryRecursive tmp
       return res
 
@@ -192,172 +216,186 @@ setupProperty cfg = do
                           )) clss
           liftIO $ do
             time <- getPOSIXTime
-            withFile pf AppendMode $ \h -> do
-              hPutStrLn h $ L.intercalate ","
+            appendFile pf $ L.intercalate ","
                 [ name
-                , show $ (realToFrac time :: Double)
-                , show $ numClss
-                , show $ numInterfaces
-                , show $ numImpls
-                , show $ numMethods
-                , show $ succ
-                ]
+                , show (realToFrac time :: Double)
+                , show numClss
+                , show numInterfaces
+                , show numImpls
+                , show numMethods
+                , show succ
+                ] ++ "\n"
         Nothing ->
           return ()
 
 classClosure ::
-  (MonadClassPool m, MonadIO m)
-  => Config
-  -> Property m
+  (MonadClassPool m, MonadIO m, MonadReader Config m)
+  => Property m
   -> m ()
-classClosure cfg property = do
+classClosure property = time "class-closure" $ do
   (found, missing) <-
-    time cfg "Running class closure" $
-      computeClassClosure $ cfg^.cfgClasses
-  info cfg $ "Found " ++ show (S.size found) ++ " required classes and "
+    time "Running class closure" $
+      computeClassClosure =<< view cfgClasses
+  info $ "Found " ++ show (S.size found) ++ " required classes and "
           ++ show (S.size missing) ++ " missing classes."
 
-  b <- cproperty "class-closure" found
-  if b
-    then
+  clss <- allClassNames
+  graph <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
+  keep <- reduce cproperty graph
+  case keep of
+    Just clss' -> onlyClasses clss'
+    Nothing -> do
+      info $ "Could not statisfy predicate"
       onlyClasses found
-    else do
-      let red = cfg^.cfgReductor
-          prop = cproperty ("class-closure-" ++ red) . (S.toList found ++)
-      clss <- allClassNames
-      keep <- (S.toList found ++) <$> case red of
-        "ddmin" ->
-          ddmin prop clss
-        "gddmin" -> do
-          gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
-          gddmin prop gr
-        "gdd" -> do
-          gr <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
-          igdd prop gr
-        _ -> error $ "Unknown reductor " ++ show red
-      onlyClasses keep
 
   void $ property "after-class-closure"
   where
     cproperty name clss =
       cplocal $ do
         onlyClasses clss
-        property name
+        property $ "class-closure-" ++ name
 
-methodClosure ::
-  (MonadClassPool m, MonadIO m)
-  => Config
-  -> Property m
-  -> m ()
-methodClosure cfg property = do
-  info cfg "Running method closure ..."
-  hry <- time cfg "Calculate hierarchy" $
-     calculateHierarchy =<< allClassNames
+reduce ::
+  (MonadReader Config m, Ord a)
+  => (String -> Predicate [a] m)
+  -> Graph a e
+  -> m (Maybe [a])
+reduce prop graph = do
+  red <- view cfgReductor
+  case red of
+    DDMin ->
+      ddmin (prop "ddmin") (graph ^.. grNodes)
+    VerifyDDMin -> do
+      let propv xs = do
+            if isClosedIn xs graph
+              then prop "ddmin:verify" xs
+              else return False
+      ddmin propv (graph ^.. grNodes)
+    GraphDDMin -> do
+      let
+        sets = closures graph
+        unset = map (^?! toLabel graph . _Just) . IS.toList . IS.unions
+        propi = prop "ddmin:graph" . unset
+      fmap unset <$> ddmin propi sets
 
-  clss <- allClasses
-  mths <- clss ^!! folded . classMethodIds
+-- methodClosure ::
+--   (MonadClassPool m, MonadIO m)
+--   => Config
+--   -> Property m
+--   -> m ()
+-- methodClosure cfg property = do
+--   info cfg "Running method closure ..."
+--   hry <- time cfg "Calculate hierarchy" $
+--      calculateHierarchy =<< allClassNames
 
-  -- rmths <- time cfg "Finding required methods" $
-  --   filterM (isMethodRequired hry) mths
-  let rmths = []
+--   clss <- allClasses
+--   mths <- clss ^!! folded . classMethodIds
 
-  info cfg $ "Found " ++ show (length rmths) ++ "/"
-      ++ show (length mths) ++ " required methods"
+--   -- rmths <- time cfg "Finding required methods" $
+--   --   filterM (isMethodRequired hry) mths
+--   let rmths = []
 
-  found <-
-    time cfg "Compute method closure" $
-     computeMethodClosure hry (S.fromList rmths)
+--   info cfg $ "Found " ++ show (length rmths) ++ "/"
+--       ++ show (length mths) ++ " required methods"
 
-  info cfg $ "Found " ++ show (S.size found) ++ " required methods after closure"
+--   found <-
+--     time cfg "Compute method closure" $
+--      computeMethodClosure hry (S.fromList rmths)
 
-  b <- mproperty "method-closure" found
-  if b
-    then
-       reduceto found
-    else do
-      let red = cfg^.cfgReductor
-          prop = mproperty ("method-closure-" ++ red) . (S.toList found ++)
-      keep <- (S.toList found ++) <$> case red of
-        "ddmin" ->
-          ddmin prop mths
-        "gddmin" -> do
-          gr <- mkCallGraph hry (S.toList $ S.fromList mths `S.difference` found)
-          gddmin prop gr
-        "gdd" -> do
-          gr <- mkCallGraph hry (S.toList $ S.fromList mths `S.difference` found)
-          igdd prop gr
-        _ -> error $ "Unknown reductor " ++ show red
-      reduceto keep
+--   info cfg $ "Found " ++ show (S.size found) ++ " required methods after closure"
 
-  void $ property "after-method-closure"
-  where
-    reduceto methods = do
-      let clsmp = M.fromListWith (S.union)
-            $ methods ^.. folded
-            . to (\c -> (c^.inClassName, S.singleton $ c ^.inId ))
-      modifyClasses $ \c ->
-        let methods = clsmp ^. at (c^.className) . folded in
-        Just (c & classMethods %~ flip M.restrictKeys methods)
+--   b <- mproperty "method-closure" found
+--   if b
+--     then
+--        reduceto found
+--     else do
+--       let red = cfg^.cfgReductor
+--           prop = mproperty ("method-closure-" ++ red) . (S.toList found ++)
+--       keep <- (S.toList found ++) <$> case red of
+--         "ddmin" ->
+--           ddmin prop mths
+--         "gddmin" -> do
+--           gr <- mkCallGraph hry (S.toList $ S.fromList mths `S.difference` found)
+--           gddmin prop gr
+--         "gdd" -> do
+--           gr <- mkCallGraph hry (S.toList $ S.fromList mths `S.difference` found)
+--           igdd prop gr
+--         _ -> error $ "Unknown reductor " ++ show red
+--       reduceto keep
 
-    mproperty name methods = do
-      cplocal $ do
-        reduceto methods
-        property name
+--   void $ property "after-method-closure"
+--   where
+--     reduceto methods = do
+--       let clsmp = M.fromListWith (S.union)
+--             $ methods ^.. folded
+--             . to (\c -> (c^.inClassName, S.singleton $ c ^.inId ))
+--       modifyClasses $ \c ->
+--         let methods = clsmp ^. at (c^.className) . folded in
+--         Just (c & classMethods %~ flip M.restrictKeys methods)
 
-runJReduce :: Config -> IO ()
-runJReduce cfg = do
+--     mproperty name methods = do
+--       cplocal $ do
+--         reduceto methods
+--         property name
 
-  classreader <- time cfg "Preloading classes ..." $
-    preload =<< createClassLoader cfg
+runJReduce :: RIO Config ()
+runJReduce = time "jreduce" $ do
+  classreader <- time "Preloading classes" $ do
+    cls <- createClassLoader
+    liftIO $ preload cls
 
-  cnt <- length <$> classes classreader
-  info cfg $ "Found " ++ show cnt ++ " classes."
+  cnt <- liftIO $ length <$> classes classreader
+  info $ "Found " ++ show cnt ++ " classes."
 
-  void . flip runCachedClassPool classreader $ do
-    property <- setupProperty cfg
+  void . flip runCachedClassPoolT classreader $ do
+    property <- setupProperty
 
     -- Test if the property have been correctly setup
     b <- property "initial"
-    when (not b) $ fail "property failed on initial classpath"
+    unless b $ fail "property failed on initial classpath"
 
     -- Run the class closure
-    classClosure cfg property
+    classClosure property
 
-    -- Run the method closure
-    methodClosure cfg property
+    -- -- Run the method closure
+    -- methodClosure cfg property
 
     property "final"
-    case cfg^.cfgOutput of
-      Just fp -> do
-        time cfg "Saving classes..." $
-          saveAllClasses fp
+    view cfgOutput >>= \case
+      Just fp ->
+        time "Saving classes" $ saveAllClasses fp
       Nothing ->
-        info cfg "Doing nothing..."
+        info "Does not save classes"
 
   where
     handleFailedToLoad [] = return ()
     handleFailedToLoad errs = do
-      hPutStrLn stderr "Could not load the following classes"
-      mapM_ (\e -> hPutStr stderr "  - " >> hPutStrLn stderr (show e)) errs
+      log "Could not load the following classes"
+      mapM_ (\e -> log $ "  - " ++ show e) errs
 
-info :: MonadIO m => Config -> String -> m ()
-info cfg =
-  when (cfg^.cfgVerbose > 0) .
-    liftIO . hPutStrLn stderr
+info :: (MonadReader Config m, MonadIO m) => String -> m ()
+info str = do
+  v <- view cfgVerbose
+  when (v > 0) $ log str
 
-time :: MonadIO m => Config -> String -> m a -> m a
-time cfg str m
-  | cfg^.cfgVerbose > 0 = do
-    t <- liftIO $ do
-      hPutStr stderr str
-      hPutStr stderr "... "
-      getPOSIXTime
-    a <- m
-    liftIO $ do
-      t' <- getPOSIXTime
-      hPutStrLn stderr $ "done [" ++ show (t' - t) ++ "]"
-    return a
-  | otherwise = m
+time :: (MonadReader Config m , MonadIO m) => String -> m a -> m a
+time str m = do
+  v <- view cfgVerbose
+  if v > 0
+    then do
+      log str
+      t <- liftIO getPOSIXTime
+      a <- local (cfgLoggingIndent %~ (+1)) m
+      t' <- liftIO getPOSIXTime
+      log $ "done [" ++ show (t' - t) ++ "]"
+      return a
+    else m
+
+log :: (MonadReader Config m, MonadIO m) => String -> m ()
+log msg = do
+  i <- view cfgLoggingIndent
+  liftIO . hPutStrLn stderr $ concat (replicate i "| ") ++ msg
+
 main :: IO ()
 main = do
   args' <- parseArgs patterns <$> getArgs
@@ -368,19 +406,38 @@ main = do
           exitWithUsage patterns
       | otherwise -> do
           cfg <- parseConfig args
-          runJReduce cfg
-    Left msg -> do
+          runRIO runJReduce cfg
+    Left msg ->
       print msg
 
 -- | Create a class loader from the config
-createClassLoader :: Config -> IO ClassLoader
-createClassLoader cfg
-  | cfg ^. cfgUseStdlib =
-    case cfg ^. cfgJre of
-      Nothing ->
-        fromClassPath (cfg ^. cfgClassPath)
-      Just jre ->
-        fromJreFolder (cfg ^. cfgClassPath) jre
-  | otherwise =
-    return $ ClassLoader [] [] (cfg ^. cfgClassPath)
+createClassLoader :: RIO Config ClassLoader
+createClassLoader = RIO $ \cfg -> do
+  let cp = cfg ^. cfgClassPath
+  if cfg ^. cfgUseStdlib
+    then
+      case cfg ^. cfgJre of
+        Nothing ->
+          liftIO $ fromClassPath cp
+        Just jre ->
+          liftIO $ fromJreFolder cp jre
+    else
+      return $ ClassLoader [] [] cp
 
+newtype RIO a b = RIO { runRIO :: a -> IO b }
+  deriving (Functor)
+
+instance Applicative (RIO a) where
+  pure = RIO . const . pure
+  mf <*> mx =
+    RIO (\a -> runRIO mf a <*> runRIO mx a)
+
+instance Monad (RIO a) where
+  m >>= f = RIO (\a -> do x <- runRIO m a; runRIO (f x) a)
+
+instance MonadReader a (RIO a) where
+  reader f = RIO $ return . f
+  local fr m = RIO (runRIO m . fr)
+
+instance MonadIO (RIO a) where
+  liftIO m = RIO (const m)

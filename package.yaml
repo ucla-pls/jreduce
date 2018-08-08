@@ -13,6 +13,7 @@ github: ucla-pls/jvmhs
 
 dependencies:
   - base >= 4.10 && < 4.11
+  - reduce
   - docopt
   - lens
   - lens-action
@@ -28,6 +29,47 @@ dependencies:
   - vector
   - split
   - time
+  - mtl
+
+default-extensions:
+  - AutoDeriveTypeable
+  - BangPatterns
+  - BinaryLiterals
+  - ConstraintKinds
+  - DataKinds
+  - DefaultSignatures
+  - DeriveDataTypeable
+  - DeriveFoldable
+  - DeriveFunctor
+  - DeriveGeneric
+  - DeriveTraversable
+  - DoAndIfThenElse
+  - EmptyDataDecls
+  - ExistentialQuantification
+  - FlexibleContexts
+  - FlexibleInstances
+  - FunctionalDependencies
+  - GADTs
+  - GeneralizedNewtypeDeriving
+  - InstanceSigs
+  - KindSignatures
+  - LambdaCase
+  - MonadFailDesugaring
+  - MultiParamTypeClasses
+  - MultiWayIf
+  - NamedFieldPuns
+  - OverloadedStrings
+  - PartialTypeSignatures
+  - PatternGuards
+  - PolyKinds
+  - RankNTypes
+  - RecordWildCards
+  - ScopedTypeVariables
+  - StandaloneDeriving
+  - TupleSections
+  - TypeFamilies
+  - TypeSynonymInstances
+  - ViewPatterns
 
 executables:
   jreduce:
