@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE DeriveGeneric   #-}
 {-# LANGUAGE QuasiQuotes         #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
@@ -13,6 +14,8 @@ import qualified Data.Set as S
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import           Data.Time
+import           Text.Printf
+import           Data.Word
 import           Data.Time.Clock.POSIX
 import qualified Data.Vector as V
 import           Prelude hiding (log)
@@ -24,15 +27,25 @@ import           System.IO
 import           System.IO.Temp
 import           System.Process
 import           System.Timeout
+import           System.FilePath
+import           System.Random
+import           GHC.Generics (Generic)
+
+import           Data.Csv
+import           Data.Csv.Builder
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Builder as BL
 
 import           Control.Monad
+import           Control.Monad.Trans
 import           Control.Monad.IO.Class
+import           Control.Monad.Trans.Reader (runReaderT)
 import           Control.Monad.Reader.Class
 import           Control.Reduce
 
 import           Control.Lens hiding (argument)
 
--- import Debug.Trace
+import Debug.Trace
 
 import           Jvmhs
 import           Jvmhs.Analysis.Reduce
@@ -51,33 +64,34 @@ Usage:
   jreduce [-v | -vv | -vvv] [options] [<property>...]
 
 Options:
-  --cp <classpath>          The classpath to search for classess
-  --stdlib                  Also include the stdlib (Don't do this)
-  --jre <jre>               The location of the stdlib
-  -W, --warn                Warn about missing classes to the stderr
-  -o, --output <output>     Output folder or jar
-  -r, --reductor <reductor> Reductor
-  --progress <progress>     A file that will contain csv data for each
-                            interation of the program
-  -c, --core <core>         The core classes, that should not be removed
-  --tmp <tmp>               The tempfolder default is the system tmp folder
-  -K, --keep                Keep temporary folders around
-  -t, --timout <timeout>    Timeout in miliseconds, default is 1000 ms
-  -v                        Be more verbose
+  --cp <classpath>           The classpath to search for classess
+  --stdlib                   Also include the stdlib (Don't do this)
+  --jre <jre>                The location of the stdlib
+  -W, --warn                 Warn about missing classes to the stderr
+  -o, --output <output>      Output folder or jar
+  -r, --reductor <reductor>  Reductor
+  -c, --core <core>          The core classes, that should not be removed
+  --work-dir <work-dir>      The directory to perform the work in
+  -K, --keep                 Keep temporary folders around
+  -t, --timout <timeout>     Timeout in seconds, default is 10 s
+  -m, --max-iterations <itr> Limit the tool to <itr> invocations of the property.
+  -v                         Be more verbose
 |]
 
 data ReductorName
   = DDMin
   | VerifyDDMin
   | GraphDDMin
+  | GBiRed
   deriving (Show, Eq)
 
 parseReductorName str =
   case str of
-    "ddmin" -> Right DDMin
-    "ddmin:verify" -> Right VerifyDDMin
-    "ddmin:graph" -> Right GraphDDMin
-    _ -> Left $ "Unknown reductor: " ++ str
+    "ddmin" -> return DDMin
+    "ddmin:verify" -> return VerifyDDMin
+    "ddmin:graph" ->return GraphDDMin
+    "gbired" -> return GBiRed
+    _ -> error $ "Unknown reductor: " ++ str
 
 -- | The config file dictates the execution of the program
 data Config = Config
@@ -88,17 +102,17 @@ data Config = Config
   , _cfgWarn           :: !Bool
   , _cfgVerbose        :: !Int
   , _cfgReductor       :: !ReductorName
-  , _cfgTempFolder     :: !FilePath
+  , _cfgWorkDir        :: !FilePath
+  , _cfgProgressFile   :: !FilePath
   , _cfgJre            :: !(Maybe FilePath)
-  , _cfgProgressFile   :: !(Maybe FilePath)
   , _cfgProperty       :: ![String]
   , _cfgKeepTempFolder :: !Bool
-  , _cfgTimeout        :: !Int
+  , _cfgTimeout        :: !Double
   , _cfgLoggingIndent  :: !Int
+  , _cfgMaxIterations  :: !(Maybe Int)
   } deriving (Show)
 
 makeLenses 'Config
-
 
 getArgOrExit :: Arguments -> Option -> IO String
 getArgOrExit = getArgOrExitWith patterns
@@ -106,31 +120,44 @@ getArgOrExit = getArgOrExitWith patterns
 parseConfig :: Arguments -> IO Config
 parseConfig args = do
   classnames <- readClassNames
-  tmpfolder <- getCanonicalTemporaryDirectory
-  reductor <- case parseReductorName $ getArgWithDefault args "ddmin" (longOption "reductor") of
-    Left err -> error err
-    Right name -> return name
-  return Config
-    { _cfgClassPath =
-        case concatMap splitClassPath $ getAllArgs args (longOption "cp") of
-          [] -> ["."]
-          as -> as
-    , _cfgOutput = getArg args (shortOption 'o')
-    , _cfgClasses = classnames
-    , _cfgWarn = isPresent args (longOption "warn")
-    , _cfgReductor = reductor
-    , _cfgUseStdlib = isPresent args (longOption "stdlib")
-    , _cfgJre = getArg args (longOption "jre")
-    , _cfgVerbose = getArgCount args (shortOption 'v')
-    , _cfgProgressFile = getArg args (longOption "progress")
-    , _cfgProperty = getAllArgs args (argument "property")
-    , _cfgTempFolder = getArgWithDefault args tmpfolder (longOption "tmp")
-    , _cfgKeepTempFolder = isPresent args (longOption "keep")
-    , _cfgTimeout = read $ getArgWithDefault args "1000" (longOption "timeout")
-    , _cfgLoggingIndent = 0
-    }
+  tmpfoldername <- getTempFolderName
+  reductor <- parseReductorName $ getArgWithDefault args "ddmin" (longOption "reductor")
+  let cfg = Config
+              { _cfgClassPath =
+                  case concatMap splitClassPath $ getAllArgs args (longOption "cp") of
+                    [] -> ["."]
+                    as -> as
+              , _cfgOutput = getArg args (shortOption 'o')
+              , _cfgClasses = classnames
+              , _cfgWarn = isPresent args (longOption "warn")
+              , _cfgReductor = reductor
+              , _cfgUseStdlib = isPresent args (longOption "stdlib")
+              , _cfgJre = getArg args (longOption "jre")
+              , _cfgVerbose = getArgCount args (shortOption 'v')
+              , _cfgProperty = getAllArgs args (argument "property")
+              , _cfgProgressFile = progressFileFromWorkDir tmpfoldername
+              , _cfgWorkDir = tmpfoldername
+              , _cfgKeepTempFolder = isPresent args (longOption "keep")
+              , _cfgTimeout = read $ getArgWithDefault args "10.0" (longOption "timeout")
+              , _cfgLoggingIndent = 0
+              , _cfgMaxIterations = read <$> getArg args (longOption "max-iterations")
+              }
+  case getArg args (longOption "work-dir") of
+    Just wd -> return (
+      cfg { _cfgWorkDir = wd
+          , _cfgKeepTempFolder = True
+          , _cfgProgressFile = progressFileFromWorkDir wd
+          })
+    Nothing -> return cfg
 
   where
+    getTempFolderName = do
+      tmpfolder <- getCanonicalTemporaryDirectory
+      x :: Word <- randomIO
+      return $ tmpfolder </> "jreduce" ++ printf "-%0x" x
+
+    progressFileFromWorkDir wd = wd </> "progress.csv"
+
     classnames' = getAllArgs args $ longOption "core"
     readClassNames :: IO (S.Set ClassName)
     readClassNames = do
@@ -139,94 +166,140 @@ parseConfig args = do
           '@':filename -> lines <$> readFile filename
           _ -> return [cn]
       return . S.fromList . map strCls $ names
-    -- splitReductions = do
-    --   case getArg args (shortOption 'r') of
-    --     Nothing -> return []
-    --     Just s  -> return $ splitOn ":" s
 
 
 type Property m = (String -> m Bool)
 
 setupProperty ::
-  (MonadClassPool m, MonadIO m, MonadReader Config m)
+  forall m. (MonadClassPool m, MonadIO m, MonadReader Config m)
   => m (Property m)
 setupProperty = do
-  cfg <- ask
-  case cfg^.cfgProgressFile of
-    Just pf ->
-      liftIO . writeFile pf $ "step,time,classes,interfaces,impls,methods,success\n"
-    Nothing ->
-      return ()
-  case cfg^.cfgProperty of
+  workdir <- view cfgWorkDir
+  exists <- liftIO $ doesDirectoryExist workdir
+  when exists . dieWith $ "Work directory " ++ show workdir ++ " exists, please delete directory."
+  liftIO $ createDirectoryIfMissing True workdir
+  pf <- view cfgProgressFile
+  liftIO $ BL.writeFile pf
+     (BL.toLazyByteString $ encodeHeader (headerOrder (undefined :: ProgressRecord)))
+  prop <- view cfgProperty
+  case prop of
     cmd:cmdArgs -> do
-      tmp <- liftIO $ do
-        createDirectoryIfMissing True (cfg^.cfgTempFolder)
-        createTempDirectory (cfg^.cfgTempFolder) "jreduce"
-      sem <- liftIO $ newMVar 0
-      return $ runProperty cmd cmdArgs tmp sem
+      cmd' <- liftIO $ makeAbsolute cmd
+      sem <- liftIO $ do
+        newMVar 0
+      info $ "Found property " ++ cmd
+      return $ runProperty cmd' cmdArgs workdir sem
     _ ->
       return $ const (return True)
 
   where
     pad m c xs = replicate (m - length xs) c ++ xs
 
-    -- runProperty :: String -> [String] -> FilePath -> MVar Int -> Property m
-    runProperty cmd cmdArgs tmp sem name = time "Running property" $ do
-      cfg <- ask
+    runProperty :: String -> [String] -> FilePath -> MVar Int -> Property m
+    runProperty cmd cmdArgs workdir sem name = time "Running property" $ do
       iteration <- liftIO $ modifyMVar sem (\i -> return (i + 1, i))
-      let
-        iterationname = name -- ++ "-" ++ pad 8 '0' (show iteration)
-        outputfolder = tmp ++ "/" ++ iterationname
-      liftIO $ createDirectoryIfMissing True outputfolder
-      time ("Saving classes to " ++ outputfolder) $
-        saveAllClasses outputfolder
-      res <- time "Invoking property" . liftIO $
-         withCreateProcess (
-           (proc cmd (cmdArgs ++ [outputfolder]))
-              { std_in = NoStream
-              , std_out = if cfg^.cfgVerbose > 1 then Inherit else NoStream
-              , std_err = if cfg^.cfgVerbose > 1 then Inherit else NoStream
-              }) $
-            \_ _ _ ph -> do
-              maybeCode <- timeout (1000 * cfg^.cfgTimeout) (waitForProcess ph)
-              case maybeCode of
-                Nothing -> do
-                  terminateProcess ph
-                  return False
-                Just ec ->
-                  return $ ec == ExitSuccess
-      info $ "Property was " ++ show res
-      logProgress cfg iterationname res
-      liftIO $
-        if cfg^.cfgKeepTempFolder then
-          putStrLn tmp
-        else
-          removeDirectoryRecursive tmp
-      return res
+      view cfgMaxIterations >>= \case
+        Just maxiter | iteration > maxiter -1 -> do
+          dieWith "Reached max iterations, failing predicate"
+        _ -> do
+          let
+            iterationname = name ++ "-" ++ pad 8 '0' (show iteration)
+            outputfolder = workdir </> iterationname
 
-    logProgress cfg name succ =
-      case cfg^.cfgProgressFile of
-        Just pf -> do
-          clss <- allClasses
-          let numClss = length clss
-              (Sum numInterfaces, Sum numImpls, Sum numMethods) =
-                foldMap (\cls -> ( Sum (if isInterface cls then 1 :: Int else 0)
-                          , Sum (cls^.classInterfaces.to S.size)
-                          , Sum (cls^.classMethods.to M.size)
-                          )) clss
-          liftIO $ do
-            time <- getPOSIXTime
-            appendFile pf $ L.intercalate ","
-                [ name
-                , show (realToFrac time :: Double)
-                , show numClss
-                , show numInterfaces
-                , show numImpls
-                , show numMethods
-                , show succ
-                ] ++ "\n"
-        Nothing ->
-          return ()
+          clsfolder <- saveClassesTo outputfolder
+
+          res <- invokeProperty cmd cmdArgs outputfolder
+
+          logProgress iterationname res
+
+          keepFolder <- view cfgKeepTempFolder
+          unless keepFolder $ do
+            info "Deleting folder"
+            liftIO $ removeDirectoryRecursive outputfolder
+
+          return res
+
+    invokeProperty :: String -> [String] -> FilePath -> m Bool
+    invokeProperty cmd cmdArgs outputfolder = do
+      tout <- view cfgTimeout
+      cfg <- ask
+      time "Invoking property" . liftIO $ do
+        hstdout <- openFile (outputfolder </> "stdout.log") WriteMode
+        hstderr <- openFile (outputfolder </> "stderr.log") WriteMode
+        withCreateProcess (
+          (proc cmd (cmdArgs ++ ["classes/"]))
+            { std_in = NoStream
+            , std_out = UseHandle hstdout
+            , std_err = UseHandle hstderr
+            , cwd = Just outputfolder
+            }) $
+          \_ _ _ ph -> do
+            maybeCode <- timeout (floor $ 1000000 * tout) $ waitForProcess ph
+            runReaderT (info $ show maybeCode) cfg
+            case maybeCode of
+              Nothing -> do
+                runReaderT (info $ "Timed out property after " ++ show tout ++ "s") cfg
+                terminateProcess ph
+                return False
+              Just ec ->
+                return $ ec == ExitSuccess
+
+    untillIO :: IO (Maybe x) -> IO x
+    untillIO m = do
+      x <- m
+      case x of
+        Just r -> return r
+        Nothing -> untillIO m
+
+    saveClassesTo outputfolder = do
+      let classesFolder = outputfolder ++ "/classes"
+      liftIO $ createDirectoryIfMissing True classesFolder
+      ncls <- L.length <$> allClassNames
+      time ("Saving " ++ show ncls ++ " classes to " ++ classesFolder) $
+        saveAllClasses classesFolder
+      return classesFolder
+
+    logProgress name succ = do
+      clss <- allClasses
+      let numClss = length clss
+          (Sum numInterfaces, Sum numImpls, Sum numMethods) =
+            foldMap (\cls -> ( Sum (if isInterface cls then 1 :: Int else 0)
+                      , Sum (cls^.classInterfaces.to S.size)
+                      , Sum (cls^.classMethods.to M.size)
+                      )) clss
+      time <- liftIO $ getPOSIXTime
+      let precord =
+            ProgressRecord
+              name
+              (realToFrac time :: Double)
+              numClss
+              numInterfaces
+              numImpls
+              numMethods
+              (if succ then Success else Fail)
+      pf <- view cfgProgressFile
+      liftIO $ BL.writeFile pf
+         (BL.toLazyByteString $ encodeDefaultOrderedNamedRecord precord)
+
+data Result = Success | Fail
+  deriving (Show, Eq)
+
+instance ToField Result where
+  toField Success = "Success"
+  toField Fail = "Fail"
+
+data ProgressRecord = ProgressRecord
+  { prStep :: String
+  , prTime :: Double
+  , prClasses :: Int
+  , prInterfaces :: Int
+  , prImpls :: Int
+  , prMethods :: Int
+  , prResult:: Result
+  } deriving (Show, Eq, Generic)
+
+instance ToNamedRecord ProgressRecord
+instance DefaultOrdered ProgressRecord
 
 classClosure ::
   (MonadClassPool m, MonadIO m, MonadReader Config m)
@@ -256,7 +329,7 @@ classClosure property = time "class-closure" $ do
         property $ "class-closure-" ++ name
 
 reduce ::
-  (MonadReader Config m, Ord a)
+  (MonadReader Config m, MonadIO m, Ord a)
   => (String -> Predicate [a] m)
   -> Graph a e
   -> m (Maybe [a])
@@ -276,7 +349,15 @@ reduce prop graph = do
         sets = closures graph
         unset = map (^?! toLabel graph . _Just) . IS.toList . IS.unions
         propi = prop "ddmin:graph" . unset
+      info $ "Found " ++ show (L.length sets) ++ " closures"
       fmap unset <$> ddmin propi sets
+    GBiRed -> do
+      let
+        sets = closures graph
+        unset = map (^?! toLabel graph . _Just) . IS.toList
+        propi = prop "gbired" . unset
+      info $ "Found " ++ show (L.length sets) ++ " closures"
+      fmap (unset . IS.unions) <$> setBinaryReduction propi sets
 
 -- methodClosure ::
 --   (MonadClassPool m, MonadIO m)
@@ -352,7 +433,7 @@ runJReduce = time "jreduce" $ do
 
     -- Test if the property have been correctly setup
     b <- property "initial"
-    unless b $ fail "property failed on initial classpath"
+    unless b $ dieWith "Property failed on initial classpath"
 
     -- Run the class closure
     classClosure property
@@ -372,6 +453,10 @@ runJReduce = time "jreduce" $ do
     handleFailedToLoad errs = do
       log "Could not load the following classes"
       mapM_ (\e -> log $ "  - " ++ show e) errs
+
+dieWith :: (MonadIO m) => String -> m b
+dieWith =
+  liftIO . die
 
 info :: (MonadReader Config m, MonadIO m) => String -> m ()
 info str = do

@@ -30,6 +30,9 @@ dependencies:
   - split
   - time
   - mtl
+  - random
+  - transformers
+  - cassava
 
 default-extensions:
   - AutoDeriveTypeable
@@ -70,6 +73,9 @@ default-extensions:
   - TypeFamilies
   - TypeSynonymInstances
   - ViewPatterns
+
+ghc-options:
+  - -threaded
 
 executables:
   jreduce:

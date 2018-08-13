@@ -1,6 +1,5 @@
 #/usr/bin/env bash
 
-
 if [ -z "$FERNFLOWER" ]
 then 
     echo "Please set \$FERNFLOWER to be the absolute path to the fernflower jar";
@@ -18,18 +17,18 @@ fi
 
 mkdir -p $output/src $output/classes
 
-
-java -jar $FERNFLOWER -dgs=1 $1 $output/src
+java -jar $FERNFLOWER -dgs=1 $1 $output/src > $output/fernflower.log
 
 find "$output/src" -name *.jar -exec unzip -d "$output/src" {} \;
 
 find "$output/src" -name *.java > "$output/sourcefiles.txt"
 
-javac -cp "$classpath":"$output/classes" -d "$output/classes" -sourcepath "$output" @"$output/sourcefiles.txt"
-err=$?
+javac -cp "$classpath":"$output/classes" -d "$output/classes" -sourcepath "$output" @"$output/sourcefiles.txt" 
+X=$?
 
-if [ "$err" == "1" ]; then
-    exit 0
+if [[ "$X" == "1" ]]; 
+then
+  exit 0
 else
-    exit 1
+  exit 1
 fi
