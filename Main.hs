@@ -73,7 +73,7 @@ Options:
   -c, --core <core>          The core classes, that should not be removed
   --work-dir <work-dir>      The directory to perform the work in
   -K, --keep                 Keep temporary folders around
-  -t, --timout <timeout>     Timeout in seconds, default is 10 s
+  -t, --timeout <timeout>    Timeout in seconds
   -m, --max-iterations <itr> Limit the tool to <itr> invocations of the property.
   -v                         Be more verbose
 |]
@@ -107,7 +107,7 @@ data Config = Config
   , _cfgJre            :: !(Maybe FilePath)
   , _cfgProperty       :: ![String]
   , _cfgKeepTempFolder :: !Bool
-  , _cfgTimeout        :: !Double
+  , _cfgTimeout        :: !(Maybe Double)
   , _cfgLoggingIndent  :: !Int
   , _cfgMaxIterations  :: !(Maybe Int)
   } deriving (Show)
@@ -138,7 +138,7 @@ parseConfig args = do
               , _cfgProgressFile = progressFileFromWorkDir tmpfoldername
               , _cfgWorkDir = tmpfoldername
               , _cfgKeepTempFolder = isPresent args (longOption "keep")
-              , _cfgTimeout = read $ getArgWithDefault args "10.0" (longOption "timeout")
+              , _cfgTimeout = read <$> getArg args (longOption "timeout")
               , _cfgLoggingIndent = 0
               , _cfgMaxIterations = read <$> getArg args (longOption "max-iterations")
               }
@@ -203,7 +203,7 @@ setupProperty = do
           dieWith "Reached max iterations, failing predicate"
         _ -> do
           let
-            iterationname = name ++ "-" ++ pad 8 '0' (show iteration)
+            iterationname = pad 6 '0' (show iteration) ++ "-" ++ name
             outputfolder = workdir </> iterationname
 
           clsfolder <- saveClassesTo outputfolder
@@ -234,22 +234,19 @@ setupProperty = do
             , cwd = Just outputfolder
             }) $
           \_ _ _ ph -> do
-            maybeCode <- timeout (floor $ 1000000 * tout) $ waitForProcess ph
-            runReaderT (info $ show maybeCode) cfg
-            case maybeCode of
+            case tout of
+              Just tout -> do
+                maybeCode <- timeout (floor $ 1000000 * tout) $ waitForProcess ph
+                case maybeCode of
+                  Nothing -> do
+                    runReaderT (info $ "Timed out property after " ++ show tout ++ "s") cfg
+                    terminateProcess ph
+                    return False
+                  Just ec ->
+                    return $ ec == ExitSuccess
               Nothing -> do
-                runReaderT (info $ "Timed out property after " ++ show tout ++ "s") cfg
-                terminateProcess ph
-                return False
-              Just ec ->
+                ec <- waitForProcess ph
                 return $ ec == ExitSuccess
-
-    untillIO :: IO (Maybe x) -> IO x
-    untillIO m = do
-      x <- m
-      case x of
-        Just r -> return r
-        Nothing -> untillIO m
 
     saveClassesTo outputfolder = do
       let classesFolder = outputfolder ++ "/classes"
@@ -278,7 +275,7 @@ setupProperty = do
               numMethods
               (if succ then Success else Fail)
       pf <- view cfgProgressFile
-      liftIO $ BL.writeFile pf
+      liftIO $ BL.appendFile pf
          (BL.toLazyByteString $ encodeDefaultOrderedNamedRecord precord)
 
 data Result = Success | Fail
@@ -298,8 +295,14 @@ data ProgressRecord = ProgressRecord
   , prResult:: Result
   } deriving (Show, Eq, Generic)
 
-instance ToNamedRecord ProgressRecord
-instance DefaultOrdered ProgressRecord
+myOptions :: Options
+myOptions = defaultOptions { fieldLabelModifier = drop 2}
+
+instance ToNamedRecord ProgressRecord where
+  toNamedRecord = genericToNamedRecord myOptions
+
+instance DefaultOrdered ProgressRecord where
+  headerOrder = genericHeaderOrder myOptions
 
 classClosure ::
   (MonadClassPool m, MonadIO m, MonadReader Config m)
@@ -337,20 +340,20 @@ reduce prop graph = do
   red <- view cfgReductor
   case red of
     DDMin ->
-      ddmin (prop "ddmin") (graph ^.. grNodes)
+      unsafeDdmin (prop "ddmin") (graph ^.. grNodes)
     VerifyDDMin -> do
       let propv xs = do
             if isClosedIn xs graph
               then prop "ddmin:verify" xs
               else return False
-      ddmin propv (graph ^.. grNodes)
+      unsafeDdmin propv (graph ^.. grNodes)
     GraphDDMin -> do
       let
         sets = closures graph
         unset = map (^?! toLabel graph . _Just) . IS.toList . IS.unions
         propi = prop "ddmin:graph" . unset
       info $ "Found " ++ show (L.length sets) ++ " closures"
-      fmap unset <$> ddmin propi sets
+      fmap unset <$> unsafeDdmin propi sets
     GBiRed -> do
       let
         sets = closures graph
