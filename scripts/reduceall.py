@@ -4,6 +4,7 @@ import os
 import csv
 import sys
 import subprocess
+from multiprocessing import Pool
 from subprocess import DEVNULL, call, check_call, Popen, PIPE, STDOUT, check_output
 from shutil import rmtree
 from pathlib import Path
@@ -23,8 +24,8 @@ logger.addHandler(ch)
 info = logger.info
 debug = logger.debug
 
-test_suite = Path(os.path.realpath(__file__)).parent
-jreduce_folder = test_suite.parent
+jreduce_folder = Path(os.path.realpath(__file__)).parent.parent
+test_suite = jreduce_folder / "test-suite"
 reductors = [ "ddmin", "ddmin:graph", "gbired", "ddmin:verify"]
 
 def run_jreduce(reductor, classes, work_dir, prop, max_iterations=1000):
@@ -105,7 +106,7 @@ def analyse_jar(jar, prop):
 
         dct[red + " iter"] = iters
         dct[red + " size"] = final
-        dct[red + " change"] = score / best_score
+        dct[red + " change"] = 0 if best_score == 0 else score / best_score
 
     p = Popen("javaq -f csv --cp {}".format(jar), stdout=PIPE, universal_newlines=True, shell=True)
     classes = list(csv.DictReader(p.stdout))
@@ -122,8 +123,10 @@ if __name__ == "__main__":
             ["name", "classes"] +
                             sum([[red + " " + kind for red in reductors ] for  kind in ["iter", "size", "change"]], []))
     writer.writeheader()
-    for jar in jars:
-        try:
-            writer.writerow(analyse_jar(Path(jar), Path(prop)))
-        except Exception as e:
-            info("failure")
+
+    def run(jar):
+        return analyse_jar(Path(jar), Path(prop))
+
+    with Pool() as p:
+        for row in p.map(run, jars):
+            writer.writerow(row)
