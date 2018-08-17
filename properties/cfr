@@ -5,7 +5,7 @@ NAME=cfr
 
 if [ -z "$CFR" ]
 then 
-    echo "Please set \$CFR to be the absolute path to the procyon jar";
+    echo "Please set \$CFR to be the absolute path to the $NAME jar";
     exit -1
 fi
 

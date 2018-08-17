@@ -1,32 +1,15 @@
 #/usr/bin/env bash
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
+NAME=fernflower
 
 if [ -z "$FERNFLOWER" ]
 then 
-    echo "Please set \$FERNFLOWER to be the absolute path to the fernflower jar";
+    echo "Please set \$FERNFLOWER to be the absolute path to the $NAME jar";
     exit -1
 fi
 
-input=$1 
+output=$NAME
+mkdir -p $output/src
 
-output=fernflower
-
-if [ -e "$output" ] 
-then 
-    rm -r "$output"
-fi
-
-mkdir -p $output/src $output/classes
-
-java -jar $FERNFLOWER -dgs=1 $1 $output/src > $output/fernflower.log
-
-find "$output/src" -name *.java > "$output/sourcefiles.txt"
-
-javac -cp "$classpath":"$output/classes" -d "$output/classes" -sourcepath "$output" @"$output/sourcefiles.txt" 
-X=$?
-
-if [[ "$X" == "1" ]]; 
-then
-  exit 0
-else
-  exit 1
-fi
+java -jar $FERNFLOWER -dgs=1 $1 $output/src > $output/$NAME.log
+exit "$(bash $DIR/utils/compile.sh $output)"
