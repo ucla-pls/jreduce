@@ -1,0 +1,21 @@
+#/usr/bin/env bash
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
+
+NAME=cfr
+
+if [ -z "$CFR" ]
+then 
+    echo "Please set \$CFR to be the absolute path to the procyon jar";
+    exit -1
+fi
+
+output=$NAME
+
+FLAGS="--caseinsensitivefs true"
+
+mkdir -p $output/src
+
+jar cf $output/input.jar -C $1 . 
+java -jar $CFR $FLAGS $output/input.jar --outputdir $output/src &> $output/$NAME.log
+
+exit "$(bash $DIR/utils/compile.sh $output)"

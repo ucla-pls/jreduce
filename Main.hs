@@ -79,6 +79,7 @@ Options:
   -t, --timeout <timeout>    Timeout in seconds
   -m, --max-iterations <itr> Limit the tool to <itr> invocations of the property.
   -v                         Be more verbose
+  -p, --phases <phases>      List the phases seperated by ':'. default: class:method
 |]
 
 data ReductorName
@@ -86,6 +87,11 @@ data ReductorName
   | VerifyDDMin
   | GraphDDMin
   | GBiRed
+  deriving (Show, Eq)
+
+data Phase
+  = ClassClosure
+  | MethodClosure
   deriving (Show, Eq)
 
 parseReductorName str =
@@ -114,12 +120,21 @@ data Config = Config
   , _cfgLoggingIndent  :: !Int
   , _cfgMaxIterations  :: !(Maybe Int)
   , _cfgStubs          :: !HierarchyStubs
+  , _cfgPhases          :: ![Phase]
   } deriving (Show)
 
 makeLenses 'Config
 
 getArgOrExit :: Arguments -> Option -> IO String
 getArgOrExit = getArgOrExitWith patterns
+
+parsePhases :: Arguments -> IO [Phase]
+parsePhases args = do
+  forM (splitOn ":" $ getArgWithDefault args "class:method" (longOption "phases")) $ \p ->
+    case p of
+      "class" -> return ClassClosure
+      "method" -> return MethodClosure
+      _ -> error $ "Does not know phase " ++ show p
 
 parseConfig :: Arguments -> IO Config
 parseConfig args = do
@@ -137,6 +152,8 @@ parseConfig args = do
             return x
           Nothing -> fail $ "Could not decode " ++ fn
       Nothing -> return $ mempty
+
+  phases <- parsePhases args
 
   let cfg = Config
               { _cfgClassPath =
@@ -158,6 +175,7 @@ parseConfig args = do
               , _cfgLoggingIndent = 0
               , _cfgMaxIterations = read <$> getArg args (longOption "max-iterations")
               , _cfgStubs = stubs
+              , _cfgPhases = phases
               }
   case getArg args (longOption "work-dir") of
     Just wd -> return (
@@ -417,6 +435,16 @@ methodClosure property = time "method-closure" $ do
         reduceto (required++ methods)
         property ("method-closure-" ++ name)
 
+
+runPhase property p =
+  case p of
+    ClassClosure ->
+      -- Run the class closure
+      classClosure property
+    MethodClosure ->
+      -- Run the method closure
+      methodClosure property
+
 runJReduce :: RIO Config ()
 runJReduce = time "jreduce" $ do
   classreader <- time "Preloading classes" $ do
@@ -433,11 +461,7 @@ runJReduce = time "jreduce" $ do
     b <- property "initial"
     unless b $ dieWith "Property failed on initial classpath"
 
-    -- Run the class closure
-    classClosure property
-
-    -- Run the method closure
-    methodClosure property
+    view cfgPhases >>= mapM_ (runPhase property)
 
     property "final"
     view cfgOutput >>= \case

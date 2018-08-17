@@ -19,8 +19,6 @@ mkdir -p $output/src $output/classes
 
 java -jar $FERNFLOWER -dgs=1 $1 $output/src > $output/fernflower.log
 
-find "$output/src" -name *.jar -exec unzip -d "$output/src" {} \;
-
 find "$output/src" -name *.java > "$output/sourcefiles.txt"
 
 javac -cp "$classpath":"$output/classes" -d "$output/classes" -sourcepath "$output" @"$output/sourcefiles.txt" 

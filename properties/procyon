@@ -1,0 +1,19 @@
+#/usr/bin/env bash
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
+
+NAME=procyon
+
+if [ -z "$PROCYON" ]
+then 
+    echo "Please set \$PROCYON to be the absolute path to the procyon jar";
+    exit -1
+fi
+
+output=$NAME
+
+mkdir -p $output/src
+
+jar cf $output/input.jar -C $1 . 
+java -jar $PROCYON $output/input.jar -o $output/src &> $output/$NAME.log
+
+exit "$(bash $DIR/utils/compile.sh $output)"
