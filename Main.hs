@@ -15,6 +15,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import           Data.Time
 import           Text.Printf
+import qualified Data.ByteString.Lazy.Char8 as BS
 import           Data.Word
 import           Data.Time.Clock.POSIX
 import qualified Data.Vector as V
@@ -33,6 +34,7 @@ import           GHC.Generics (Generic)
 
 import           Data.Csv
 import           Data.Csv.Builder
+import qualified Data.Aeson as A
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Builder as BL
 
@@ -71,6 +73,7 @@ Options:
   -o, --output <output>      Output folder or jar
   -r, --reductor <reductor>  Reductor
   -c, --core <core>          The core classes, that should not be removed
+  --stub <stub>              Stub-classes, can be used instead of loading the library
   --work-dir <work-dir>      The directory to perform the work in
   -K, --keep                 Keep temporary folders around
   -t, --timeout <timeout>    Timeout in seconds
@@ -110,6 +113,7 @@ data Config = Config
   , _cfgTimeout        :: !(Maybe Double)
   , _cfgLoggingIndent  :: !Int
   , _cfgMaxIterations  :: !(Maybe Int)
+  , _cfgStubs          :: !HierarchyStubs
   } deriving (Show)
 
 makeLenses 'Config
@@ -121,7 +125,19 @@ parseConfig :: Arguments -> IO Config
 parseConfig args = do
   classnames <- readClassNames
   tmpfoldername <- getTempFolderName
-  reductor <- parseReductorName $ getArgWithDefault args "ddmin" (longOption "reductor")
+  reductor <- parseReductorName $ getArgWithDefault args "gbired" (longOption "reductor")
+
+  stubs :: HierarchyStubs <-
+    case getArg args (longOption "stub") of
+      Just fn -> do
+        x <- A.decode <$> BS.readFile fn
+        case x of
+          Just x -> do
+            hPutStrLn stderr "Loaded stub-file"
+            return x
+          Nothing -> fail $ "Could not decode " ++ fn
+      Nothing -> return $ mempty
+
   let cfg = Config
               { _cfgClassPath =
                   case concatMap splitClassPath $ getAllArgs args (longOption "cp") of
@@ -141,6 +157,7 @@ parseConfig args = do
               , _cfgTimeout = read <$> getArg args (longOption "timeout")
               , _cfgLoggingIndent = 0
               , _cfgMaxIterations = read <$> getArg args (longOption "max-iterations")
+              , _cfgStubs = stubs
               }
   case getArg args (longOption "work-dir") of
     Just wd -> return (
@@ -277,6 +294,7 @@ setupProperty = do
       pf <- view cfgProgressFile
       liftIO $ BL.appendFile pf
          (BL.toLazyByteString $ encodeDefaultOrderedNamedRecord precord)
+      info $ show precord
 
 data Result = Success | Fail
   deriving (Show, Eq)
@@ -303,33 +321,6 @@ instance ToNamedRecord ProgressRecord where
 
 instance DefaultOrdered ProgressRecord where
   headerOrder = genericHeaderOrder myOptions
-
-classClosure ::
-  (MonadClassPool m, MonadIO m, MonadReader Config m)
-  => Property m
-  -> m ()
-classClosure property = time "class-closure" $ do
-  (found, missing) <-
-    time "Running class closure" $
-      computeClassClosure =<< view cfgClasses
-  info $ "Found " ++ show (S.size found) ++ " required classes and "
-          ++ show (S.size missing) ++ " missing classes."
-
-  clss <- allClassNames
-  graph <- mkClassGraph (S.toList $ S.fromList clss `S.difference` found)
-  keep <- reduce cproperty graph
-  case keep of
-    Just clss' -> onlyClasses clss'
-    Nothing -> do
-      info $ "Could not statisfy predicate"
-      onlyClasses found
-
-  void $ property "after-class-closure"
-  where
-    cproperty name clss =
-      cplocal $ do
-        onlyClasses clss
-        property $ "class-closure-" ++ name
 
 reduce ::
   (MonadReader Config m, MonadIO m, Ord a)
@@ -362,65 +353,69 @@ reduce prop graph = do
       info $ "Found " ++ show (L.length sets) ++ " closures"
       fmap (unset . IS.unions) <$> setBinaryReduction propi sets
 
--- methodClosure ::
---   (MonadClassPool m, MonadIO m)
---   => Config
---   -> Property m
---   -> m ()
--- methodClosure cfg property = do
---   info cfg "Running method closure ..."
---   hry <- time cfg "Calculate hierarchy" $
---      calculateHierarchy =<< allClassNames
+classClosure ::
+  (MonadClassPool m, MonadIO m, MonadReader Config m)
+  => Property m
+  -> m ()
+classClosure property = time "class-closure" $ do
+  (found, missing) <-
+    time "Running class closure" $
+      computeClassClosure =<< view cfgClasses
+  info $ "Found " ++ show (S.size found) ++ " required classes and "
+          ++ show (S.size missing) ++ " missing classes."
 
---   clss <- allClasses
---   mths <- clss ^!! folded . classMethodIds
+  clss <- allClassNames
+  graph <- mkClassGraph
+  keep <- reduce cproperty graph
+  case keep of
+    Just clss' -> onlyClasses clss'
+    Nothing -> do
+      info $ "Could not statisfy predicate"
+      onlyClasses found
 
---   -- rmths <- time cfg "Finding required methods" $
---   --   filterM (isMethodRequired hry) mths
---   let rmths = []
+  void $ property "after-class-closure"
+  where
+    cproperty name clss =
+      cplocal $ do
+        onlyClasses clss
+        property $ "class-closure-" ++ name
 
---   info cfg $ "Found " ++ show (length rmths) ++ "/"
---       ++ show (length mths) ++ " required methods"
+methodClosure ::
+  (MonadClassPool m, MonadIO m, MonadReader Config m)
+  => Property m
+  -> m ()
+methodClosure property = time "method-closure" $ do
+  (missed, hry) <- time "Calculate hierarchy" $
+     getHierarchy
 
---   found <-
---     time cfg "Compute method closure" $
---      computeMethodClosure hry (S.fromList rmths)
+  methodids <- concat <$> mapClasses (requiredMethods hry)
 
---   info cfg $ "Found " ++ show (S.size found) ++ " required methods after closure"
+  (missing, graph) <- mkCallGraph hry
 
---   b <- mproperty "method-closure" found
---   if b
---     then
---        reduceto found
---     else do
---       let red = cfg^.cfgReductor
---           prop = mproperty ("method-closure-" ++ red) . (S.toList found ++)
---       keep <- (S.toList found ++) <$> case red of
---         "ddmin" ->
---           ddmin prop mths
---         "gddmin" -> do
---           gr <- mkCallGraph hry (S.toList $ S.fromList mths `S.difference` found)
---           gddmin prop gr
---         "gdd" -> do
---           gr <- mkCallGraph hry (S.toList $ S.fromList mths `S.difference` found)
---           igdd prop gr
---         _ -> error $ "Unknown reductor " ++ show red
---       reduceto keep
+  let (required, graph') = forwardRemove graph methodids
 
---   void $ property "after-method-closure"
---   where
---     reduceto methods = do
---       let clsmp = M.fromListWith (S.union)
---             $ methods ^.. folded
---             . to (\c -> (c^.inClassName, S.singleton $ c ^.inId ))
---       modifyClasses $ \c ->
---         let methods = clsmp ^. at (c^.className) . folded in
---         Just (c & classMethods %~ flip M.restrictKeys methods)
+  keep <- reduce (mproperty required) graph'
+  case keep of
+    Just methods ->
+      reduceto (required ++ methods)
+    Nothing -> do
+      info $ "Could not statisfy predicate"
 
---     mproperty name methods = do
---       cplocal $ do
---         reduceto methods
---         property name
+  void $ property "after-method-closure"
+  where
+    reduceto methods = do
+      info $ "Reduced to " ++ show (length methods)
+      let clsmp = M.fromListWith (S.union)
+            $ methods ^.. folded
+            . to (\c -> (c^.inClassName, S.singleton $ c ^.inId ))
+      modifyClasses $ \c ->
+        let methods = clsmp ^. at (c^.className) . folded in
+        Just (c & classMethods %~ flip M.restrictKeys methods)
+
+    mproperty required name methods = do
+      cplocal $ do
+        reduceto (required++ methods)
+        property ("method-closure-" ++ name)
 
 runJReduce :: RIO Config ()
 runJReduce = time "jreduce" $ do
@@ -441,8 +436,8 @@ runJReduce = time "jreduce" $ do
     -- Run the class closure
     classClosure property
 
-    -- -- Run the method closure
-    -- methodClosure cfg property
+    -- Run the method closure
+    methodClosure property
 
     property "final"
     view cfgOutput >>= \case
