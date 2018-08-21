@@ -24,7 +24,7 @@ logger.addHandler(ch)
 info = logger.info
 debug = logger.debug
 
-reductors = [ "ddmin:graph", "gbired", "ddmin:verify"]
+reductors = [ "ddmin:graph", "gbired", "ddmin:verify", "ddmin:graph-sort"]
 
 def run_jreduce(reductor, classes, work_dir, prop, max_iterations=1000):
     info("Running {}".format(work_dir))
@@ -56,26 +56,27 @@ def run_property(prop, output_folder):
 
 def compute_reduction(jar, prop, output_folder, pool):
     classes = output_folder / "classes"
-    classes.mkdir(parents=True)
+   
+    if not classes.exists():
+        classes.mkdir(parents=True)
+        if not check_call(["unzip", str(jar.resolve())], stderr=DEVNULL, stdout=DEVNULL, cwd=str(classes)) == 0:
+            info("Could not unzip {}, continuing..".format(jar.resolve()))
+            return
 
-    if not check_call(["unzip", str(jar.resolve())], stderr=DEVNULL, stdout=DEVNULL, cwd=str(classes)) == 0:
-        info("Could not unzip {}, continuing..".format(jar.resolve()))
-        return
-
-    pool.apply_async(run_property, (prop, output_folder))
+    if not (output_folder / "stdout.log").exists():
+        pool.apply_async(run_property, (prop, output_folder))
 
     for red in reductors:
-        pool.apply_async(run_jreduce, (red, classes, output_folder / red, [str(prop)]))
+        folder = output_folder / red
+        if not folder.exists():
+            pool.apply_async(run_jreduce, (red, classes, folder, [str(prop)]))
 
 def analyse_jar(jar, prop, basefolder, pool):
     name = jar.stem
     prop_name = prop.stem
     output_folder = basefolder / prop_name / name
 
-    if not output_folder.exists():
-        info("Working on {}".format(name))
-        compute_reduction(jar, prop, output_folder, pool)
-        return None
+    compute_reduction(jar, prop, output_folder, pool)
 
     dct = { "name" : name, "prop": prop_name}
 

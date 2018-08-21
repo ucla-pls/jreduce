@@ -86,6 +86,7 @@ data ReductorName
   = DDMin
   | VerifyDDMin
   | GraphDDMin
+  | GraphSortDDMin
   | GBiRed
   deriving (Show, Eq)
 
@@ -98,7 +99,8 @@ parseReductorName str =
   case str of
     "ddmin" -> return DDMin
     "ddmin:verify" -> return VerifyDDMin
-    "ddmin:graph" ->return GraphDDMin
+    "ddmin:graph" -> return GraphDDMin
+    "ddmin:graph-sort" -> return GraphSortDDMin
     "gbired" -> return GBiRed
     _ -> error $ "Unknown reductor: " ++ str
 
@@ -363,6 +365,13 @@ reduce prop graph = do
         propi = prop "ddmin:graph" . unset
       info $ "Found " ++ show (L.length sets) ++ " closures"
       fmap unset <$> unsafeDdmin propi sets
+    GraphSortDDMin -> do
+      let
+        sets = closures graph
+        unset = map (^?! toLabel graph . _Just) . IS.toList . IS.unions
+        propi = prop "ddmin:graph-sort" . unset
+      info $ "Found " ++ show (L.length sets) ++ " closures"
+      fmap unset <$> unsafeDdmin propi (L.sortOn IS.size sets)
     GBiRed -> do
       let
         sets = closures graph
