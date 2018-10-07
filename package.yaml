@@ -12,7 +12,7 @@ category: Language, Java, JVM
 github: ucla-pls/jvmhs
 
 dependencies:
-  - base >= 4.10 && < 4.11
+  - base >= 4.10 && < 4.12
   - reduce
   - docopt
   - lens
