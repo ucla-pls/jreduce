@@ -463,7 +463,7 @@ runJReduce = time "jreduce" $ do
   cnt <- liftIO $ length <$> classes classreader
   info $ "Found " ++ show cnt ++ " classes."
 
-  void . flip runCachedClassPoolT classreader $ do
+  void . flip runCachedClassPoolT (defaultFromReader classreader) $ do
     property <- setupProperty
 
     -- Test if the property have been correctly setup
