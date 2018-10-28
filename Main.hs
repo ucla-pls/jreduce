@@ -8,9 +8,7 @@ module Main where
 import qualified Data.IntSet as IS
 import qualified Data.List as L
 import           Data.List.Split
-import qualified Data.Map as M
 import           Data.Monoid
-import qualified Data.Set as S
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import           Data.Time
@@ -32,6 +30,11 @@ import           System.FilePath
 import           System.Random
 import           GHC.Generics (Generic)
 
+
+-- unordered-containers
+import qualified Data.HashSet as S
+import qualified Data.HashMap.Strict as M
+
 import           Data.Csv
 import           Data.Csv.Builder
 import qualified Data.Aeson as A
@@ -50,6 +53,7 @@ import           Control.Lens hiding (argument)
 import Debug.Trace
 
 import           Jvmhs
+import           Jvmhs.Data.Named
 import           Jvmhs.Analysis.Reduce
 import           Control.Concurrent
 
@@ -108,7 +112,7 @@ parseReductorName str =
 data Config = Config
   { _cfgClassPath      :: !ClassPath
   , _cfgOutput         :: !(Maybe FilePath)
-  , _cfgClasses        :: !(S.Set ClassName)
+  , _cfgClasses        :: !(S.HashSet ClassName)
   , _cfgUseStdlib      :: !Bool
   , _cfgWarn           :: !Bool
   , _cfgVerbose        :: !Int
@@ -196,7 +200,7 @@ parseConfig args = do
     progressFileFromWorkDir wd = wd </> "progress.csv"
 
     classnames' = getAllArgs args $ longOption "core"
-    readClassNames :: IO (S.Set ClassName)
+    readClassNames :: IO (S.HashSet ClassName)
     readClassNames = do
       names <- fmap concat . forM classnames' $ \cn ->
         case cn of
@@ -434,10 +438,11 @@ methodClosure property = time "method-closure" $ do
       info $ "Reduced to " ++ show (length methods)
       let clsmp = M.fromListWith (S.union)
             $ methods ^.. folded
-            . to (\c -> (c^.inClassName, S.singleton $ c ^.inId ))
+            . to (\c -> (c^._1, S.singleton $ c ^._2))
       modifyClasses $ \c ->
-        let methods = clsmp ^. at (c^.className) . folded in
-        Just (c & classMethods %~ flip M.restrictKeys methods)
+        let
+          methods = clsmp ^. at (c^.name) . folded
+        in Just (c & classMethods %~ flip M.difference (S.toMap methods))
 
     mproperty required name methods = do
       cplocal $ do

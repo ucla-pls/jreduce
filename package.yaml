@@ -33,6 +33,7 @@ dependencies:
   - random
   - transformers
   - cassava
+  - unordered-containers
 
 default-extensions:
   - AutoDeriveTypeable
