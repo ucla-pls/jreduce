@@ -225,7 +225,11 @@ setupProperty = do
   prop <- view cfgProperty
   case prop of
     cmd:cmdArgs -> do
-      cmd' <- liftIO $ makeAbsolute cmd
+      cmd' <- liftIO $ do
+        cmd' <- makeAbsolute cmd
+        doesFileExist cmd' >>= \case
+          True -> return cmd'
+          False -> error $ "Executable does not exits: " ++ cmd
       sem <- liftIO $ do
         newMVar 0
       info $ "Found property " ++ cmd
