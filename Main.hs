@@ -30,7 +30,6 @@ import           System.FilePath
 import           System.Random
 import           GHC.Generics (Generic)
 
-
 -- unordered-containers
 import qualified Data.HashSet as S
 import qualified Data.HashMap.Strict as M

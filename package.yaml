@@ -14,71 +14,36 @@ github: ucla-pls/jvmhs
 dependencies:
   - base >= 4.10 && < 4.12
   - reduce
-  - docopt
+  - reduce-util
+  - jvmhs
+  - optparse-applicative
+  - mtl
+  - unordered-containers
   - lens
   - lens-action
-  - aeson
-  - containers
   - filepath
-  - bytestring
-  - text
-  - jvmhs
-  - process
-  - directory
-  - temporary
-  - vector
-  - split
-  - time
-  - mtl
-  - random
-  - transformers
-  - cassava
-  - unordered-containers
-
-default-extensions:
-  - AutoDeriveTypeable
-  - BangPatterns
-  - BinaryLiterals
-  - ConstraintKinds
-  - DataKinds
-  - DefaultSignatures
-  - DeriveDataTypeable
-  - DeriveFoldable
-  - DeriveFunctor
-  - DeriveGeneric
-  - DeriveTraversable
-  - DoAndIfThenElse
-  - EmptyDataDecls
-  - ExistentialQuantification
-  - FlexibleContexts
-  - FlexibleInstances
-  - FunctionalDependencies
-  - GADTs
-  - GeneralizedNewtypeDeriving
-  - InstanceSigs
-  - KindSignatures
-  - LambdaCase
-  - MonadFailDesugaring
-  - MultiParamTypeClasses
-  - MultiWayIf
-  - NamedFieldPuns
-  - OverloadedStrings
-  - PartialTypeSignatures
-  - PatternGuards
-  - PolyKinds
-  - RankNTypes
-  - RecordWildCards
-  - ScopedTypeVariables
-  - StandaloneDeriving
-  - TupleSections
-  - TypeFamilies
-  - TypeSynonymInstances
-  - ViewPatterns
-
-ghc-options:
-  - -threaded
+  - unliftio
+  # - aeson
+  # - containers
+  # - filepath
+  # - bytestring
+  # - text
+  # - jvmhs
+  # - process
+  # - directory
+  # - temporary
+  # - vector
+  # - split
+  # - time
+  # - mtl
+  # - random
+  # - transformers
+  # - cassava
 
 executables:
   jreduce:
     source-dirs: .
-    main: Main.hs
+    main: JReduce.hs
+    ghc-options:
+      - -O2
+      - -threaded
