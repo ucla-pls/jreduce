@@ -23,6 +23,11 @@ dependencies:
   - lens-action
   - filepath
   - unliftio
+  - zip-archive
+  - bytestring
+  - deepseq
+  - containers
+  - text
   # - aeson
   # - containers
   # - filepath
