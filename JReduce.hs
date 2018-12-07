@@ -209,20 +209,25 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
       <-> "classes," <-> display (length coreFp) <-> "in the target."
     return (coreFp, grph)
 
-  let graphLeft = graphSize grph
-  if graphLeft == 0
+  redOpt <- view cfgReducerOptions
+  worked <- liftRIO . L.phase "Checking if core satisfies predicate" $ do
+    worked <- withCurrentDirectory (workFolder redOpt </> "class-core") $
+      runPredicateM predicate coreFp
+    L.debug (if worked then "It did." else "It did not.")
+    return worked
+
+  if not worked
     then do
-    L.debug $ "No further class reduction after core closure."
+    L.info $ "No further class reduction needed after core closure."
     return (Just targets)
 
     else do
-    L.debug $ "Possible reduction left:" <-> display graphLeft
+    L.debug $ "Possible reduction left:" <-> display (graphSize grph)
     partitions <- L.phase "Compute partition of graph:" $ do
       let partitions = partition grph
       L.debug $ "Found" <-> display (length partitions) <-> "SCC."
       return $!! partitions
 
-    redOpt <- view cfgReducerOptions
     liftRIO $ do
       x <- reduce redOpt "class" (logAndTransform coreFp `contramapM` predicate) $ partitions
       return $ fmap (\a -> coreFp ++ toX a) x
