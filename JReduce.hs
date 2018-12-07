@@ -27,7 +27,14 @@ import           Options.Applicative          as A
 
 -- reduce
 import           Data.Functor.Contravariant.PredicateM
+<<<<<<< HEAD
 -- import           Control.Reduce
+
+-- bytestring
+import qualified Data.ByteString.Lazy         as BL
+=======
+import           Control.Reduce
+>>>>>>> 2f3d085a22206f6fcbe3c07077e0f626371b2de2
 
 -- bytestring
 import qualified Data.ByteString.Lazy         as BL
@@ -159,9 +166,7 @@ main = do
 run :: ReaderT Config IO ()
 run = do
   workFolder <- view $ cfgReducerOptions . to workFolder
-
   (ttree, textra) <- unpackTarget =<< makeAbsolute (workFolder </> "unpacked")
-
   let
     targets = catMaybes $
         (\(fn, a) -> (,a) <$> asClassName fn)
@@ -178,7 +183,6 @@ run = do
       Just predicate -> do
         classReduction predicate targets >>= \case
           Just t' -> do
-            -- L.info "Is a cool thing "
             output <- view cfgOutput
             liftIO . writeTreeWith copySame $
               output :/ (textra <> (fromJust $ fromFileList (map (over _1 relativePathOfClass) t')))
