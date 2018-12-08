@@ -214,7 +214,7 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
     L.debug (if worked then "It did." else "It did not.")
     return worked
 
-  if not worked
+  if worked
     then do
     L.info $ "No further class reduction needed after core closure."
     return (Just targets)
@@ -249,22 +249,6 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
 
     toX :: [([ClassName], [ClassName])] -> [(ClassName, a)]
     toX = toValues . List.concatMap (view _2)
-
-    -- toSCCs name nm lst = do
-    --   let
-    --     (bad, Set.fromList -> required) =
-    --       partitionEithers
-    --       . toListOf (folded . to (\n -> maybe (Left n) Right $ Map.lookup n nm ))
-    --       $ lst
-
-    --   forM_ bad $ \cn -> do
-    --     L.warn $ "Could not find"
-    --       <-> name
-    --       <-> "class:"
-    --       <-> display (cn ^. fullyQualifiedName) <> "."
-
-    --   L.debug $ "Found that" <-> name <-> "covers" <-> display (Set.size required) <-> "SCC."
-    --   return required
 
 setupPredicate ::
   (HasLogger env, HasConfig env, MonadReader env m, MonadClassPool m, MonadIO m)
