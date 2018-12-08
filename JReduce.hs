@@ -27,14 +27,6 @@ import           Options.Applicative          as A
 
 -- reduce
 import           Data.Functor.Contravariant.PredicateM
-<<<<<<< HEAD
--- import           Control.Reduce
-
--- bytestring
-import qualified Data.ByteString.Lazy         as BL
-=======
-import           Control.Reduce
->>>>>>> 2f3d085a22206f6fcbe3c07077e0f626371b2de2
 
 -- bytestring
 import qualified Data.ByteString.Lazy         as BL
@@ -215,7 +207,9 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
 
   redOpt <- view cfgReducerOptions
   worked <- liftRIO . L.phase "Checking if core satisfies predicate" $ do
-    worked <- withCurrentDirectory (workFolder redOpt </> "class-core") $
+    let corefolder = (workFolder redOpt </> "class-core")
+    createDirectoryIfMissing True corefolder
+    worked <- withCurrentDirectory corefolder $
       runPredicateM predicate coreFp
     L.debug (if worked then "It did." else "It did not.")
     return worked
