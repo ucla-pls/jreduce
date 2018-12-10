@@ -194,22 +194,11 @@ classReduction ::
   -> [(ClassName, a)]
   -> m (Maybe [(ClassName, a)])
 classReduction predicate targets = L.phase "Class Reduction" $ do
-  (coreFp, grph) <- L.phase "Compute Class Graph" $ do
-    (coreCls, grph) <- forwardRemove <$> mkClassGraph <*> view cfgCore
-    let coreFp = toValues coreCls
-    L.debug
-      $ "The core closure is" <-> display (length coreCls)
-      <-> "classes," <-> display (length coreFp) <-> "in the target."
-    return (coreFp, grph)
-
   redOpt <- view cfgReducerOptions
-  worked <- liftRIO . L.phase "Checking if core satisfies predicate" $ do
-    let corefolder = (workFolder redOpt </> "class-core")
-    createDirectoryIfMissing True corefolder
-    worked <- withCurrentDirectory corefolder $
-      runPredicateM predicate coreFp
-    L.debug (if worked then "It did." else "It did not.")
-    return worked
+
+  (coreFp, grph) <- computeClassGraph
+
+  worked <- checkIfCoreSatisfiesPredicate redOpt coreFp
 
   if worked
     then do
@@ -219,16 +208,36 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
     else do
     let grph' = shrink grph (map fst targets)
     L.debug $ "Possible reduction left:" <-> display (graphSize grph')
-    partitions <- L.phase "Compute partition of graph:" $ do
-      let partitions = partition grph'
-      L.debug $ "Found" <-> display (length partitions) <-> "SCC."
-      return $!! partitions
+
+    partitions <- computePartitionOfGraph grph'
 
     liftRIO $ do
       x <- reduce redOpt "class" (logAndTransform coreFp `contramapM` predicate) $ partitions
       return $ fmap (\a -> coreFp ++ toX a) x
 
   where
+    computeClassGraph = L.phase "Compute Class Graph" $ do
+      (coreCls, grph) <- forwardRemove <$> mkClassGraph <*> view cfgCore
+      let coreFp = toValues coreCls
+      L.debug
+        $ "The core closure is" <-> display (length coreCls)
+        <-> "classes," <-> display (length coreFp) <-> "in the target."
+      return (coreFp, grph)
+
+    checkIfCoreSatisfiesPredicate redOpt coreFp =
+      liftRIO . L.phase "Checking if core satisfies predicate" $ do
+      let corefolder = (workFolder redOpt </> "class-core")
+      createDirectoryIfMissing True corefolder
+      worked <- withCurrentDirectory corefolder $
+        runPredicateM predicate coreFp
+      L.debug (if worked then "It did." else "It did not.")
+      return worked
+
+    computePartitionOfGraph grph = L.phase "Compute partition of graph:" $ do
+      let partitions = partition grph
+      L.debug $ "Found" <-> display (length partitions) <-> "SCCs."
+      return $!! partitions
+
     graphSize = sumOf (grNodes . like (1 :: Int))
 
     values = HashMap.fromList targets
