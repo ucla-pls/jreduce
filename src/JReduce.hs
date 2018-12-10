@@ -7,6 +7,8 @@
 {-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE ViewPatterns        #-}
 
+module JReduce where
+
 -- lens
 import           Control.Lens
 
@@ -60,11 +62,6 @@ import           System.Exit
 
 -- jvhms
 import           Jvmhs
-
-newtype Showed x = Showed x
-
-instance Show (Showed x) where
-  showsPrec _ _ _ = "Unshowable"
 
 data Config = Config
   { _cfgLogger         :: !Logger
@@ -135,7 +132,7 @@ configParser =
     mkConfig l cores cp stdlib jre target output comRed co c = do
       classCore <- readClassNames cores
       red <- comRed
-      return $ Config l classCore cp stdlib jre target output red co (Showed c)
+      return $ Config l classCore cp stdlib jre target output red co c
 
     readClassNames classnames' = do
       names <- fmap concat . forM classnames' $ \cn ->
@@ -258,7 +255,7 @@ setupPredicate ::
   -> m (Maybe (PredicateM (ReaderT env IO) [(ClassName, FileContent)]))
 setupPredicate classesToFiles classData = L.phase "Setup Predicate" $ do
   checkOpt <- view cfgCheckOptions
-  Showed (CmdOptionWithoutFormat cmdFn) <- view cfgCmdOptions
+  CmdOptionWithoutFormat cmdFn <- view cfgCmdOptions
   workFolder <- view $ cfgReducerOptions . to workFolder
 
   cmd <- liftIO $ cmdFn (DirInput "classes")

@@ -7,7 +7,7 @@ maintainer: Christian Gram Kalhauge <kalhauge@cs.ucla.edu>
 synopsis: A tool for reducing Java Bytecode files 
 
 license: MIT
-license-file: ../LICENSE
+license-file: LICENSE
 category: Language, Java, JVM
 github: ucla-pls/jvmhs
 
@@ -28,27 +28,16 @@ dependencies:
   - deepseq
   - containers
   - text
-  # - aeson
-  # - containers
-  # - filepath
-  # - bytestring
-  # - text
-  # - jvmhs
-  # - process
-  # - directory
-  # - temporary
-  # - vector
-  # - split
-  # - time
-  # - mtl
-  # - random
-  # - transformers
-  # - cassava
+
+library:
+  source-dirs: src
 
 executables:
   jreduce:
     source-dirs: .
-    main: JReduce.hs
+    main: Main.hs
+    dependencies: 
+      - jreduce
     ghc-options:
       - -O2
       - -threaded
