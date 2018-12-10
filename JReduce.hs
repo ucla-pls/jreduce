@@ -221,9 +221,9 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
 
     else do
     let grph' = shrink grph (map fst targets)
-    L.debug $ "Possible reduction left:" <-> display (graphSize grph)
+    L.debug $ "Possible reduction left:" <-> display (graphSize grph')
     partitions <- L.phase "Compute partition of graph:" $ do
-      let partitions = partition grph
+      let partitions = partition grph'
       L.debug $ "Found" <-> display (length partitions) <-> "SCC."
       return $!! partitions
 
