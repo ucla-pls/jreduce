@@ -217,7 +217,7 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
   if worked
     then do
     L.info $ "No further class reduction needed after core closure."
-    return (Just targets)
+    return (Just coreFp)
 
     else do
     L.debug $ "Possible reduction left:" <-> display (graphSize grph)
