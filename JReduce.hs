@@ -220,6 +220,7 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
     return (Just coreFp)
 
     else do
+    let grph' = shrink grph (map fst targets)
     L.debug $ "Possible reduction left:" <-> display (graphSize grph)
     partitions <- L.phase "Compute partition of graph:" $ do
       let partitions = partition grph
