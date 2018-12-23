@@ -54,14 +54,44 @@ import qualified Data.IntSet                           as IS
 -- unliftio
 import           UnliftIO.Directory
 
+-- text
+import qualified Data.Text.Lazy.Builder as Builder
+
 -- base
 import           Data.Foldable
--- import qualified Data.List                             as List
+import           Data.Functor
+import           Data.Char
+import qualified Data.List as L
 import           Data.Maybe
 import           System.Exit
 
+
 -- jvhms
 import           Jvmhs
+
+
+data Validation
+  = Reject
+  | Shrink
+  | NoValidation
+  deriving (Show, Eq)
+
+data Strategy
+  = ByItem Validation
+  | ByClosure
+  deriving (Show, Eq)
+
+strategyReader :: ReadM Strategy
+strategyReader = maybeReader $ \s -> do
+  let
+    name = map toLower s
+    check = guard . L.isPrefixOf name
+  asum
+    [ check "closure" $> ByClosure
+    , check "reject-item" $> ByItem Reject
+    , check "shrink-item" $> ByItem Shrink
+    , check "item" $> ByItem NoValidation
+    ]
 
 data Config = Config
   { _cfgLogger           :: !Logger
@@ -70,9 +100,8 @@ data Config = Config
   , _cfgUseStdlib        :: !Bool
   , _cfgJreFolder        :: !(Maybe FilePath)
   , _cfgTarget           :: !FilePath
-  , _cfgOutput           :: !FilePath
-  , _cfgByClass          :: !Bool
-  , _cfgValidate         :: !Bool
+  , _cfgOutput           :: !(Maybe FilePath)
+  , _cfgStrategy         :: !Strategy
   , _cfgReducerName      :: !ReducerName
   , _cfgPredicateOptions :: !PredicateOptions
   } deriving (Show)
@@ -113,19 +142,18 @@ configParser =
       <> metavar "FILE"
       <> help "the path to the jar or folder to reduce."
     )
-    <*> strOption
+    <*> (Just <$> strOption
     ( short 'o'
       <> long "output"
       <> metavar "FILE"
       <> help "the path output folder."
-    )
-    <*> switch
-    ( long "by-class"
+    ) <|> pure Nothing)
+    <*> option strategyReader
+    ( short 'S'
+      <> long "strategy"
       <> help "reduce by class instead of by closure."
-    )
-    <*> switch
-    ( long "validate"
-      <> help "validate each collection of classes choosen."
+      <> showDefaultWith (map toLower . show)
+      <> value ByClosure
     )
     <*> parseReducerName
     <*> parsePredicateOptions "jreduce"
@@ -137,12 +165,12 @@ configParser =
       <> help "the core classes to not reduce."
       )
 
-    mkConfig l cores cp stdlib jre target output bc vl rname mkPredOpt = do
+    mkConfig l cores cp stdlib jre target output strat rname mkPredOpt = do
       classCore <- readClassNames cores
       predOpt <- mkPredOpt
       return $ Config l classCore
         cp stdlib jre target output
-        bc vl
+        strat
         rname predOpt
 
     readClassNames classnames' = do
@@ -174,17 +202,29 @@ run = do
       Just predicate -> do
         classReduction predicate clss >>= \case
           Just t' -> do
-            output <- view cfgOutput
-            liftIO . writeTreeWith copySame $
-              output :/ classesToFiles textra t'
+            liftRIO (runPredicateM predicate t') >>= \case
+              True -> outputResults textra (ccContent t')
+              False ->
+                failwith "The reduced result did not satisfy the predicate (flaky?)"
           Nothing -> do
-            L.err "Could not reduce results."
-            liftIO $ exitWith (ExitFailure 1)
+            failwith "Could not reduce results."
       Nothing -> do
-        L.err "Could not satisfy predicate."
-        liftIO $ exitWith (ExitFailure 1)
-
+        failwith "Could not satisfy predicate."
   where
+    failwith ::
+      (HasLogger env, MonadReader env m, MonadIO m)
+      => Builder.Builder
+      -> m ()
+    failwith msg = do
+      L.err msg
+      liftIO $ exitWith (ExitFailure 1)
+
+    outputResults textra t' = view cfgOutput >>= \case
+      Just output ->
+        liftIO.writeTreeWith copySame $ output :/ classesToFiles textra t'
+      Nothing ->
+        L.warn "Did not output to output."
+
     copySame fp = \case
       SameAs fp' -> copyFile fp' fp
       Content bs -> BL.writeFile fp bs
@@ -233,39 +273,43 @@ classReduction ::
   (HasLogger env, HasConfig env, MonadReader env m, MonadClassPool m, MonadIO m)
   => PredicateM (ReaderT env IO) (ClassCounter [(ClassName, a)])
   -> [(ClassName, a)]
-  -> m (Maybe [(ClassName, a)])
+  -> m (Maybe (ClassCounter [(ClassName, a)]))
 classReduction predicate targets = L.phase "Class Reduction" $ do
   (coreFp, flip shrink (map fst targets) -> grph) <- computeClassGraph
   L.debug $ "Possible reduction left:" <-> display (graphSize grph)
 
-  byClass <- view cfgByClass
   rname <- view cfgReducerName
-  x <- if byClass
-    then do
-    validate <- view cfgValidate
-    predicate' <- if validate
-      then do
-      return . PredicateM $ \x ->
-        if flip isClosedIn grph . map fst . ccContent $ x
-        then runPredicateM predicate x
-        else return False
-      else do
-      return predicate
 
-    liftRIO
-      . reduce rname Nothing predicate'
-      ((\a -> ClassCounter (length a) (length a) a) . (coreFp ++))
-      $ targets
+  view cfgStrategy >>= \case
+    ByItem validate -> do
+      predicate' <- case validate of
+        NoValidation ->
+          return predicate
 
-    else do
-    closures' <- computeClosuresOfGraph grph
+        Reject -> do
+          return . PredicateM $ \x ->
+            if flip isClosedIn grph . map fst . ccContent $ x
+            then runPredicateM predicate x
+            else return False
 
-    liftRIO
-      . reduce rname (Just $ IS.size . IS.unions)
-          predicate (fromIntSet coreFp grph)
-      $ closures'
+        Shrink -> do
+          return $
+            (computeClassCounter.toValues.collapse grph.map fst.ccContent)
+            `contramap` predicate
 
-  return $ ccContent <$> x
+      liftRIO
+        . reduce rname Nothing predicate' computeClassCounter $ targets
+        where
+          computeClassCounter =
+            (\a -> ClassCounter (length a) (length a) a) . (coreFp ++)
+
+    ByClosure ->  do
+      closures' <- computeClosuresOfGraph grph
+
+      liftRIO
+        . reduce rname (Just $ IS.size . IS.unions)
+            predicate (fromIntSet coreFp grph)
+        $ closures'
 
   where
     fromIntSet coreFp graph scc = do
