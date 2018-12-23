@@ -28,6 +28,7 @@ dependencies:
   - deepseq
   - containers
   - text
+  - cassava
 
 library:
   source-dirs: src

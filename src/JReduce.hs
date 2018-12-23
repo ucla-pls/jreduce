@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveFunctor       #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RankNTypes          #-}
@@ -24,39 +25,38 @@ import           Control.Monad.Reader
 -- filepath
 import           System.FilePath
 
+-- cassava
+import qualified Data.Csv                              as C
+
 -- optparse-applicative
-import           Options.Applicative          as A
+import           Options.Applicative                   as A
 
 -- reduce
 import           Data.Functor.Contravariant.PredicateM
 
 -- bytestring
-import qualified Data.ByteString.Lazy         as BL
+import qualified Data.ByteString.Lazy                  as BL
 
 -- reduce-util
 import           Control.Reduce.Util
-import           Control.Reduce.Util.Logger   as L hiding (update, view)
+import           Control.Reduce.Util.Logger            as L hiding (update,
+                                                             view)
 import           Control.Reduce.Util.OptParse
 import           System.Directory.Tree
 
 -- unordered-containers
-import qualified Data.HashMap.Strict          as HashMap
-import qualified Data.HashSet                 as HashSet
+import qualified Data.HashMap.Strict                   as HashMap
+import qualified Data.HashSet                          as HashSet
 
--- -- containers
--- import qualified Data.Map                     as Map
--- import qualified Data.Set                     as Set
-
--- text
--- import qualified Data.Text.Lazy.Builder as Builder
+-- containers
+import qualified Data.IntSet                           as IS
 
 -- unliftio
 import           UnliftIO.Directory
 
 -- base
--- import           Data.Either
 import           Data.Foldable
-import qualified Data.List                    as List
+-- import qualified Data.List                             as List
 import           Data.Maybe
 import           System.Exit
 
@@ -64,16 +64,17 @@ import           System.Exit
 import           Jvmhs
 
 data Config = Config
-  { _cfgLogger         :: !Logger
-  , _cfgCore           :: HashSet.HashSet ClassName
-  , _cfgClassPath      :: [ FilePath ]
-  , _cfgUseStdlib      :: Bool
-  , _cfgJreFolder      :: (Maybe FilePath)
-  , _cfgTarget         :: FilePath
-  , _cfgOutput         :: FilePath
-  , _cfgReducerOptions :: !ReducerOptions
-  , _cfgCheckOptions   :: !CheckOptions
-  , _cfgCmdOptions     :: !CmdOptionWithoutFormat
+  { _cfgLogger           :: !Logger
+  , _cfgCore             :: !(HashSet.HashSet ClassName)
+  , _cfgClassPath        :: ![ FilePath ]
+  , _cfgUseStdlib        :: !Bool
+  , _cfgJreFolder        :: !(Maybe FilePath)
+  , _cfgTarget           :: !FilePath
+  , _cfgOutput           :: !FilePath
+  , _cfgByClass          :: !Bool
+  , _cfgValidate         :: !Bool
+  , _cfgReducerName      :: !ReducerName
+  , _cfgPredicateOptions :: !PredicateOptions
   } deriving (Show)
 
 makeClassy ''Config
@@ -118,9 +119,16 @@ configParser =
       <> metavar "FILE"
       <> help "the path output folder."
     )
-    <*> parseReducerOptions "jreduce"
-    <*> parseCheckOptions
-    <*> parseCmdOptions
+    <*> switch
+    ( long "by-class"
+      <> help "reduce by class instead of by closure."
+    )
+    <*> switch
+    ( long "validate"
+      <> help "validate each collection of classes choosen."
+    )
+    <*> parseReducerName
+    <*> parsePredicateOptions "jreduce"
   where
     parseCore = strOption (
       short 'c'
@@ -129,10 +137,13 @@ configParser =
       <> help "the core classes to not reduce."
       )
 
-    mkConfig l cores cp stdlib jre target output comRed co c = do
+    mkConfig l cores cp stdlib jre target output bc vl rname mkPredOpt = do
       classCore <- readClassNames cores
-      red <- comRed
-      return $ Config l classCore cp stdlib jre target output red co c
+      predOpt <- mkPredOpt
+      return $ Config l classCore
+        cp stdlib jre target output
+        bc vl
+        rname predOpt
 
     readClassNames classnames' = do
       names <- fmap concat . forM classnames' $ \cn ->
@@ -154,27 +165,18 @@ main = do
 
 run :: ReaderT Config IO ()
 run = do
-  workFolder <- view $ cfgReducerOptions . to workFolder
-  (ttree, textra) <- unpackTarget =<< makeAbsolute (workFolder </> "unpacked")
-  let
-    targets = catMaybes $
-        (\(fn, a) -> (,a) <$> asClassName fn)
-        <$> toFileList ttree
-    classesToFiles clss =
-      textra <> (
-        fromJust . fromFileList . map (_1 %~ relativePathOfClass) $ clss
-      )
+  workFolder <- view $ cfgPredicateOptions . to predOptWorkFolder
+  (toClassList -> clss, textra) <- unpackTarget (workFolder </> "unpacked")
 
   classreader <- preloadClasses
-
   void . flip runCachedClassPoolT (defaultFromReader classreader) $ do
-    setupPredicate classesToFiles targets >>= \case
+    setupPredicate (classesToFiles textra) clss >>= \case
       Just predicate -> do
-        classReduction predicate targets >>= \case
+        classReduction predicate clss >>= \case
           Just t' -> do
             output <- view cfgOutput
             liftIO . writeTreeWith copySame $
-              output :/ (textra <> (fromJust $ fromFileList (map (over _1 relativePathOfClass) t')))
+              output :/ classesToFiles textra t'
           Nothing -> do
             L.err "Could not reduce results."
             liftIO $ exitWith (ExitFailure 1)
@@ -187,56 +189,108 @@ run = do
       SameAs fp' -> copyFile fp' fp
       Content bs -> BL.writeFile fp bs
 
+    toClassList =
+      catMaybes
+      . map (\(a,b) -> (,b) <$> asClassName a)
+      . toFileList
+
+    classesToFiles textra clss =
+      textra <> classesToFiles' clss
+
+    classesToFiles' clss =
+      fromJust . fromFileList . map (_1 %~ relativePathOfClass) $ clss
+
+data ClassCounter a = ClassCounter
+  { ccClosures :: Int
+  , ccClasses  :: Int
+  , ccContent  :: a
+  } deriving (Functor)
+
+type ClassFiles = ClassCounter [(ClassName, FileContent)]
+
+instance Metric (ClassCounter a) where
+  order = Const ["scc", "classes"]
+  fields ClassCounter {..} =
+    [ "scc" C..= ccClosures
+    , "classes" C..= ccClasses
+    ]
+
+setupPredicate ::
+  (HasLogger env, HasConfig env, MonadReader env m, MonadClassPool m, MonadIO m)
+  => ([(ClassName, FileContent)] -> DirTree FileContent)
+  -> [(ClassName, FileContent)]
+  -> m ( Maybe ( PredicateM (ReaderT env IO) ClassFiles ) )
+setupPredicate classesToFiles classData = L.phase "Setup Predicate" $ do
+  predOpt <- view cfgPredicateOptions
+  liftRIO $
+    toPredicateM
+      predOpt
+      (fromDirTree "classes" . classesToFiles . ccContent)
+      (ClassCounter 0 (length classData) classData)
+
 classReduction ::
   forall m env a.
   (HasLogger env, HasConfig env, MonadReader env m, MonadClassPool m, MonadIO m)
-  => PredicateM (ReaderT env IO) [(ClassName, a)]
+  => PredicateM (ReaderT env IO) (ClassCounter [(ClassName, a)])
   -> [(ClassName, a)]
   -> m (Maybe [(ClassName, a)])
 classReduction predicate targets = L.phase "Class Reduction" $ do
-  redOpt <- view cfgReducerOptions
+  (coreFp, flip shrink (map fst targets) -> grph) <- computeClassGraph
+  L.debug $ "Possible reduction left:" <-> display (graphSize grph)
 
-  (coreFp, grph) <- computeClassGraph
-
-  worked <- checkIfCoreSatisfiesPredicate redOpt coreFp
-
-  if worked
+  byClass <- view cfgByClass
+  rname <- view cfgReducerName
+  x <- if byClass
     then do
-    L.info $ "No further class reduction needed after core closure."
-    return (Just coreFp)
+    validate <- view cfgValidate
+    predicate' <- if validate
+      then do
+      return . PredicateM $ \x ->
+        if flip isClosedIn grph . map fst . ccContent $ x
+        then runPredicateM predicate x
+        else return False
+      else do
+      return predicate
+
+    liftRIO
+      . reduce rname Nothing predicate'
+      ((\a -> ClassCounter (length a) (length a) a) . (coreFp ++))
+      $ targets
 
     else do
-    let grph' = shrink grph (map fst targets)
-    L.debug $ "Possible reduction left:" <-> display (graphSize grph')
+    closures' <- computeClosuresOfGraph grph
 
-    partitions <- computePartitionOfGraph grph'
+    liftRIO
+      . reduce rname (Just $ IS.size . IS.unions)
+          predicate (fromIntSet coreFp grph)
+      $ closures'
 
-    liftRIO $ do
-      x <- reduce redOpt "class" (logAndTransform coreFp `contramapM` predicate) $ partitions
-      return $ fmap (\a -> coreFp ++ toX a) x
+  return $ ccContent <$> x
 
   where
+    fromIntSet coreFp graph scc = do
+      let
+        is = IS.unions scc
+        cl = coreFp ++ (toValues $ labels (IS.toList is) graph)
+      ClassCounter
+        { ccClosures = length scc
+        , ccClasses = length cl
+        , ccContent = cl
+        }
+
     computeClassGraph = L.phase "Compute Class Graph" $ do
       (coreCls, grph) <- forwardRemove <$> mkClassGraph <*> view cfgCore
       let coreFp = toValues coreCls
       L.debug
         $ "The core closure is" <-> display (length coreCls)
-        <-> "classes," <-> display (length coreFp) <-> "in the target."
+        <-> "classes," <-> display (length coreFp)
+        <-> "in the target."
       return (coreFp, grph)
 
-    checkIfCoreSatisfiesPredicate redOpt coreFp =
-      liftRIO . L.phase "Checking if core satisfies predicate" $ do
-      let corefolder = (workFolder redOpt </> "class-core")
-      createDirectoryIfMissing True corefolder
-      worked <- withCurrentDirectory corefolder $
-        runPredicateM predicate coreFp
-      L.debug (if worked then "It did." else "It did not.")
-      return worked
-
-    computePartitionOfGraph grph = L.phase "Compute partition of graph:" $ do
-      let partitions = partition grph
-      L.debug $ "Found" <-> display (length partitions) <-> "SCCs."
-      return $!! partitions
+    computeClosuresOfGraph grph = L.phase "Compute closures of graph:" $ do
+      let closures' = closures grph
+      L.debug $ "Found" <-> display (length closures') <-> "SCCs."
+      return $!! closures'
 
     graphSize = sumOf (grNodes . like (1 :: Int))
 
@@ -246,31 +300,17 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
       let keepThese = HashSet.fromList $ lst
       in HashMap.toList (HashMap.intersection values (HashSet.toMap keepThese))
 
-    logAndTransform coreFp res = do
-      let x = toX res
-      L.debug
-        $ "Reducing to" <-> display (length res)
-        <-> "SCC, containing" <-> display (length x)
-        <-> "classes."
-      return (coreFp ++ x)
+    -- logAndTransform coreFp res = do
+    --   let x = toX res
+    --   L.debug
+    --     $ "Reducing to" <-> display (length res)
+    --     <-> "SCC, containing" <-> display (length x)
+    --     <-> "classes."
+    --   return (coreFp ++ x)
 
-    toX :: [([ClassName], [ClassName])] -> [(ClassName, a)]
-    toX = toValues . List.concatMap (view _2)
+    -- toX :: [([ClassName], [ClassName])] -> [(ClassName, a)]
+    -- toX = toValues . List.concatMap (view _2)
 
-setupPredicate ::
-  (HasLogger env, HasConfig env, MonadReader env m, MonadClassPool m, MonadIO m)
-  => ([(ClassName, FileContent)] -> DirTree FileContent)
-  -> [(ClassName, FileContent)]
-  -> m (Maybe (PredicateM (ReaderT env IO) [(ClassName, FileContent)]))
-setupPredicate classesToFiles classData = L.phase "Setup Predicate" $ do
-  checkOpt <- view cfgCheckOptions
-  CmdOptionWithoutFormat cmdFn <- view cfgCmdOptions
-  workFolder <- view $ cfgReducerOptions . to workFolder
-
-  cmd <- liftIO $ cmdFn (DirInput "classes")
-  prd <- liftRIO $ toPredicateM checkOpt cmd workFolder (classesToFiles classData)
-
-  return . fmap (contramap classesToFiles) $ prd
 
 unpackTarget ::
   (MonadReader s m, MonadIO m, HasLogger s, HasConfig s)
