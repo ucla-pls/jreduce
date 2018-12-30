@@ -366,7 +366,7 @@ unpackTarget folder = do
     if dx
       then liftIO $ do
         _ :/ tree <- readTree target
-        writeTreeWith copyFileWithMetadata (folder :/ tree)
+        writeTreeWith (flip copyFileWithMetadata) (folder :/ tree)
       else liftIO $ do
         arch <- toArchive <$> BL.readFile target
         extractFilesFromArchive [OptDestination folder] arch
