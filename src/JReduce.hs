@@ -200,14 +200,11 @@ run = do
   void . flip runCachedClassPoolT (defaultFromReader classreader) $ do
     setupPredicate (classesToFiles textra) clss >>= \case
       Just predicate -> do
-        classReduction predicate clss >>= \case
-          Just t' -> do
-            liftRIO (runPredicateM predicate t') >>= \case
-              True -> outputResults textra (ccContent t')
-              False ->
-                failwith "The reduced result did not satisfy the predicate (flaky?)"
-          Nothing -> do
-            failwith "Could not reduce results."
+        t' <- fromMaybe (fromClasses clss) <$> classReduction predicate clss
+        liftRIO (runPredicateM predicate t') >>= \case
+          True -> outputResults textra (ccContent t')
+          False ->
+            failwith "The reduced result did not satisfy the predicate (flaky?)"
       Nothing -> do
         failwith "Could not satisfy predicate."
   where
@@ -246,6 +243,10 @@ data ClassCounter a = ClassCounter
   , ccContent  :: a
   } deriving (Functor)
 
+fromClasses :: Foldable t => t a -> ClassCounter (t a)
+fromClasses classData =
+  ClassCounter 0 (length classData) classData
+
 type ClassFiles = ClassCounter [(ClassName, FileContent)]
 
 instance Metric (ClassCounter a) where
@@ -266,7 +267,7 @@ setupPredicate classesToFiles classData = L.phase "Setup Predicate" $ do
     toPredicateM
       predOpt
       (fromDirTree "classes" . classesToFiles . ccContent)
-      (ClassCounter 0 (length classData) classData)
+      $ fromClasses classData
 
 classReduction ::
   forall m env a.
