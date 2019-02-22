@@ -101,6 +101,7 @@ data Config = Config
   , _cfgJreFolder        :: !(Maybe FilePath)
   , _cfgTarget           :: !FilePath
   , _cfgOutput           :: !(Maybe FilePath)
+  , _cfgRecursive        :: !Bool
   , _cfgStrategy         :: !Strategy
   , _cfgReducerName      :: !ReducerName
   , _cfgPredicateOptions :: !PredicateOptions
@@ -148,6 +149,12 @@ configParser =
       <> metavar "FILE"
       <> help "the path output folder."
     ) <|> pure Nothing)
+
+    <*> switch
+    ( long "recursive" <> short 'r'
+      <> help "remove other files and reduce internal jars."
+    )
+
     <*> option strategyReader
     ( short 'S'
       <> long "strategy"
@@ -165,11 +172,12 @@ configParser =
       <> help "the core classes to not reduce."
       )
 
-    mkConfig l cores cp stdlib jre target output strat rname mkPredOpt = do
+    mkConfig l cores cp stdlib jre target output recur strat rname mkPredOpt = do
       classCore <- readClassNames cores
       predOpt <- mkPredOpt
       return $ Config l classCore
         cp stdlib jre target output
+        recur
         strat
         rname predOpt
 
@@ -194,7 +202,25 @@ main = do
 run :: ReaderT Config IO ()
 run = do
   workFolder <- view $ cfgPredicateOptions . to predOptWorkFolder
-  (toClassList -> clss, textra) <- unpackTarget (workFolder </> "unpacked")
+  (tclss, textra') <- unpackTarget (workFolder </> "unpacked")
+  let clss = toClassList tclss
+
+  textra <- view cfgRecursive >>= \case
+    True -> L.phase "remove extra files" $ do
+      let extras = toFileList textra'
+      predOpt' <- view cfgPredicateOptions
+      let predOpt = predOpt' { predOptWorkFolder = workFolder </> "extra-files" }
+      toPredicateM predOpt (fromDirTree "classes" . (tclss <>)  . fromJust . fromFileList . unCount) (counted extras) >>= \case
+        Just predicate -> do
+          rname <- view cfgReducerName
+          reduce rname Nothing predicate counted extras >>= \case
+            Just reduction -> do
+              return . fromJust . fromFileList . unCount $ reduction
+            Nothing -> do
+              failwith "The reduced result did not satisfy the predicate (flaky?)"
+        Nothing ->
+          failwith "Could not satisify the predicate."
+    False -> return $ textra'
 
   classreader <- preloadClasses
   void . flip runCachedClassPoolT (defaultFromReader classreader) $ do
@@ -206,12 +232,12 @@ run = do
           False ->
             failwith "The reduced result did not satisfy the predicate (flaky?)"
       Nothing -> do
-        failwith "Could not satisfy predicate."
+        failwith "Could not satisfy the predicate."
   where
     failwith ::
       (HasLogger env, MonadReader env m, MonadIO m)
       => Builder.Builder
-      -> m ()
+      -> m a
     failwith msg = do
       L.err msg
       liftIO $ exitWith (ExitFailure 1)

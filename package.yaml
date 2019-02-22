@@ -12,7 +12,7 @@ category: Language, Java, JVM
 github: ucla-pls/jvmhs
 
 dependencies:
-  - base >= 4.10 && < 4.12
+  - base >= 4.10 && < 4.13
   - reduce
   - reduce-util
   - jvmhs
