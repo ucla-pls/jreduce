@@ -29,6 +29,7 @@ dependencies:
   - containers
   - text
   - cassava
+  - time
 
 library:
   source-dirs: src

@@ -25,6 +25,9 @@ import           Control.Monad.Reader
 -- filepath
 import           System.FilePath
 
+-- -- directory
+-- import           System.Directory
+
 -- cassava
 import qualified Data.Csv                              as C
 
@@ -56,6 +59,9 @@ import           UnliftIO.Directory
 
 -- text
 import qualified Data.Text.Lazy.Builder as Builder
+
+-- time
+import Data.Time.Clock.System
 
 -- base
 import           Data.Foldable
@@ -228,7 +234,7 @@ run = do
       Just predicate -> do
         t' <- fromMaybe (fromClasses clss) <$> classReduction predicate clss
         liftRIO (runPredicateM predicate t') >>= \case
-          True -> outputResults textra (ccContent t')
+          True -> outputResults workFolder textra (ccContent t')
           False ->
             failwith "The reduced result did not satisfy the predicate (flaky?)"
       Nothing -> do
@@ -242,9 +248,17 @@ run = do
       L.err msg
       liftIO $ exitWith (ExitFailure 1)
 
-    outputResults textra t' = view cfgOutput >>= \case
-      Just output ->
-        liftIO.writeTreeWith copySame $ output :/ classesToFiles textra t'
+    outputResults workFolder textra t' =
+      view cfgOutput >>= \case
+      Just output
+        | isJar output -> liftIO $ do
+            let tmpFolder = (workFolder </> output)
+            writeTreeWith copySame $ tmpFolder :/ classesToFiles textra t'
+            arc <- withCurrentDirectory tmpFolder $ do
+              addFilesToArchive [OptRecursive] emptyArchive ["."]
+            BL.writeFile output (fromArchive arc)
+        | otherwise -> liftIO $ do
+          writeTreeWith copySame $ output :/ classesToFiles textra t'
       Nothing ->
         L.warn "Did not output to output."
 
