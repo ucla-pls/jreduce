@@ -1,0 +1,81 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.31.1.
+--
+-- see: https://github.com/sol/hpack
+--
+-- hash: 0c0623750e1b1523266414790494bc63ac602855d637b38d97ae5e9570b04721
+
+name:           jreduce
+version:        0.0.1
+synopsis:       A tool for reducing Java Bytecode files
+description:    A tool for reducing Java Bytecode files 
+category:       Language, Java, JVM
+homepage:       https://github.com/ucla-pls/jvmhs#readme
+bug-reports:    https://github.com/ucla-pls/jvmhs/issues
+author:         Christian Gram Kalhauge
+maintainer:     Christian Gram Kalhauge <kalhauge@cs.ucla.edu>
+license:        MIT
+license-file:   LICENSE
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/ucla-pls/jvmhs
+
+library
+  exposed-modules:
+      JReduce
+  other-modules:
+      Paths_jreduce
+  hs-source-dirs:
+      src
+  build-depends:
+      base >=4.10 && <4.13
+    , bytestring
+    , cassava
+    , containers
+    , deepseq
+    , filepath
+    , jvmhs
+    , lens
+    , lens-action
+    , mtl
+    , optparse-applicative
+    , reduce
+    , reduce-util
+    , text
+    , time
+    , unliftio
+    , unordered-containers
+    , zip-archive
+  default-language: Haskell2010
+
+executable jreduce
+  main-is: Main.hs
+  other-modules:
+      Paths_jreduce
+  hs-source-dirs:
+      app
+  ghc-options: -O2 -threaded
+  build-depends:
+      base >=4.10 && <4.13
+    , bytestring
+    , cassava
+    , containers
+    , deepseq
+    , filepath
+    , jreduce
+    , jvmhs
+    , lens
+    , lens-action
+    , mtl
+    , optparse-applicative
+    , reduce
+    , reduce-util
+    , text
+    , time
+    , unliftio
+    , unordered-containers
+    , zip-archive
+  default-language: Haskell2010

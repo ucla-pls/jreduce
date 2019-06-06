@@ -1,0 +1,25 @@
+resolver: lts-12.26
+packages:
+- .
+- location: 
+    git: https://github.com/ucla-pls/reduce.git
+    commit: 471a89c5174a4410a613c0768eb8760ca8343af8
+    subdirs:
+      - reduce
+      - reduce-util
+  extra-dep: true
+- location: 
+    git: https://github.com/ucla-pls/jvmhs.git
+    subdirs:
+      - jvmhs
+    commit: 37e069cc02a249225d3cc0fcc3acc3083a1c8682
+  extra-dep: true
+extra-deps: 
+- fgl-visualize-0.1.0.1
+- dotgen-0.4.2
+- jvm-binary-0.4.0
+flags: {}
+extra-package-dbs:
+build:
+  library-profiling: true
+  executable-profiling: true

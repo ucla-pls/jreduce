@@ -36,7 +36,7 @@ library:
 
 executables:
   jreduce:
-    source-dirs: .
+    source-dirs: app
     main: Main.hs
     dependencies: 
       - jreduce
