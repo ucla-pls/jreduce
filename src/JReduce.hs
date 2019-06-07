@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor       #-}
+{-# LANGUAGE ApplicativeDo       #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RankNTypes          #-}
@@ -119,74 +120,84 @@ instance HasLogger Config where
   loggerL = cfgLogger
 
 configParser :: Parser (IO Config)
-configParser =
-  mkConfig
-    <$> parseLogger
-    <*> many parseCore
-    <*> (concat <$>
-         many (
-            splitClassPath
-              <$> strOption
-              (long "cp"
-               <> metavar "CLASSPATH"
-               <> help "the library classpath, of things not reduced.")
-            ))
-    <*> switch
-    ( long "stdlib"
-      <> help "load the standard library."
-    )
-    <*> asum
-    [ Just <$> strOption
-         ( long "jre"
-           <> metavar "JRE"
-           <> help "the location of the stdlib."
-         )
-    , pure Nothing
-    ]
-    <*> strOption
-    ( short 't'
-      <> long "target"
-      <> metavar "FILE"
-      <> help "the path to the jar or folder to reduce."
-    )
-    <*> (Just <$> strOption
-    ( short 'o'
-      <> long "output"
-      <> metavar "FILE"
-      <> help "the path output folder."
-    ) <|> pure Nothing)
+configParser = do
 
-    <*> switch
-    ( long "recursive" <> short 'r'
-      <> help "remove other files and reduce internal jars."
-    )
+  _cfgTarget <-
+    strArgument
+    $ metavar "INPUT"
+    <> help "the path to the jar or folder to reduce."
 
-    <*> option strategyReader
-    ( short 'S'
-      <> long "strategy"
-      <> help "reduce by class instead of by closure."
-      <> showDefaultWith (map toLower . show)
-      <> value ByClosure
-    )
-    <*> parseReducerName
-    <*> parsePredicateOptions "jreduce"
+  _cfgLogger <- parseLogger
+
+  ioCore <-
+    fmap readClassNames . many . strOption
+    $ short 'c'
+    <> long "core"
+    <> metavar "CORE"
+    <> hidden
+    <> help "the core classes to not reduce. Can add a file of classes with prepending @."
+
+  _cfgClassPath <-
+    fmap concat . many
+    . fmap splitClassPath
+    . strOption
+    $ long "cp"
+      <> hidden
+      <> metavar "CLASSPATH"
+      <> help ("the library classpath of things not reduced. "
+               ++ "This is useful if the core files is not in the reduction, like when you are"
+               ++ "reducing a library using a test-suite"
+               )
+
+  _cfgUseStdlib <-
+    switch $ long "stdlib"
+    <> hidden
+    <> help "load the standard library? This is unnecessary for most reductions."
+
+  _cfgJreFolder <-
+    optional . strOption $ long "jre"
+    <> hidden
+    <> metavar "JRE"
+    <> help "the location of the stdlib."
+
+
+  _cfgOutput <-
+    optional . strOption
+    $ short 'o'
+    <> long "output"
+    <> hidden
+    <> metavar "FILE"
+    <> help "set the output path."
+
+  _cfgRecursive <-
+    switch $
+    long "recursive"
+    <> short 'r'
+    <> hidden
+    <> help "remove other files and reduce internal jars."
+
+  _cfgStrategy <-
+    option strategyReader
+    $ short 'S'
+    <> long "strategy"
+    <> metavar "STRATEGY"
+    <> hidden
+    <> help ( "reduce by class instead of by closure (default: closure)." ++
+              "Choose between closure, reject-item, and item." )
+    <> value ByClosure
+
+  _cfgReducerName <-
+    parseReducerName
+
+  ioPredicateOptions <-
+    parsePredicateOptions "jreduce"
+
+  pure $ do
+    _cfgCore <- ioCore
+    _cfgPredicateOptions <- ioPredicateOptions
+    return $ Config {..}
+
   where
-    parseCore = strOption (
-      short 'c'
-      <> long "core"
-      <> metavar "CORE"
-      <> help "the core classes to not reduce."
-      )
-
-    mkConfig l cores cp stdlib jre target output recur strat rname mkPredOpt = do
-      classCore <- readClassNames cores
-      predOpt <- mkPredOpt
-      return $ Config l classCore
-        cp stdlib jre target output
-        recur
-        strat
-        rname predOpt
-
     readClassNames classnames' = do
       names <- fmap concat . forM classnames' $ \cn ->
         case cn of
@@ -385,17 +396,6 @@ classReduction predicate targets = L.phase "Class Reduction" $ do
       let keepThese = HashSet.fromList $ lst
       in HashMap.toList (HashMap.intersection values (HashSet.toMap keepThese))
 
-    -- logAndTransform coreFp res = do
-    --   let x = toX res
-    --   L.debug
-    --     $ "Reducing to" <-> display (length res)
-    --     <-> "SCC, containing" <-> display (length x)
-    --     <-> "classes."
-    --   return (coreFp ++ x)
-
-    -- toX :: [([ClassName], [ClassName])] -> [(ClassName, a)]
-    -- toX = toValues . List.concatMap (view _2)
-
 
 unpackTarget ::
   (MonadReader s m, MonadIO m, HasLogger s, HasConfig s)
@@ -412,8 +412,6 @@ unpackTarget folder = do
         arch <- toArchive <$> BL.readFile target
         extractFilesFromArchive [OptDestination folder] arch
 
-    -- TODO: Do not save files yet (problems with runtime annotation).
-    -- saveClasses folder targets
     _ :/ tree <- liftIO $ fmap SameAs <$> readTree folder
 
     return
