@@ -135,7 +135,7 @@ configParser = do
     <> long "core"
     <> metavar "CORE"
     <> hidden
-    <> help "the core classes to not reduce. Can add a file of classes with prepending @."
+    <> help "the core classes to not reduce. Can add a file of classes by prefixing @."
 
   _cfgClassPath <-
     fmap concat . many
@@ -146,7 +146,7 @@ configParser = do
       <> metavar "CLASSPATH"
       <> help ("the library classpath of things not reduced. "
                ++ "This is useful if the core files is not in the reduction, like when you are"
-               ++ "reducing a library using a test-suite"
+               ++ " reducing a library using a test-suite"
                )
 
   _cfgUseStdlib <-

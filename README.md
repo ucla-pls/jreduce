@@ -13,8 +13,10 @@ stack install
 
 ## Usage
 
-JReduce can reduce Java files given a predicate. A predicate is any
-program you can think of, but often it is a bash script. 
+JReduce can reduce Java files given a predicate. Simple usage is best
+described with `jreduce [...] -o OUTPUT INPUT CMD [ARG..]`. The CMD is
+any program that test the property of the input file, often it is a bash
+script. You can add any number of arguments to the command:
 
 ```
 jreduce -o ouput.jar input.jar ./predicate.sh %anotherfile.txt {} 
@@ -23,7 +25,7 @@ jreduce -o ouput.jar input.jar ./predicate.sh %anotherfile.txt {}
 JReduce will now try to produce the smallest jar-file that satisfies the
 predicate. The predicate will be run in separated workspaces so that
 they do not interfere with each other. In this case the `{}` will be
-substituted with an unpacked and reduced folder of classes, and 
+substituted with the unpacked and reduced folder of classes, and 
 the `%` prefix means that the input is a file. Like this:
 
 ```
@@ -40,7 +42,7 @@ There are a lot of extra options which can be explored by running
 ```
 jreduce
 
-Usage: jreduce INPUT [...] CMD [ARG..]
+Usage: jreduce [...] INPUT CMD [ARG..]
   A command line tool for reducing java programs.
 
 Available options:
@@ -49,10 +51,10 @@ Available options:
   -q                       make it more quiet.
   -D,--log-depth ARG       set the log depth. (default: -1)
   -c,--core CORE           the core classes to not reduce. Can add a file of
-                           classes with prepending @.
+                           classes by prepending @.
   --cp CLASSPATH           the library classpath of things not reduced. This is
                            useful if the core files is not in the reduction,
-                           like when you arereducing a library using a
+                           like when you are reducing a library using a
                            test-suite
   --stdlib                 load the standard library? This is unnecessary for
                            most reductions.
