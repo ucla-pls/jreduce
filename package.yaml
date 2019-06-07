@@ -6,7 +6,7 @@ author: Christian Gram Kalhauge
 maintainer: Christian Gram Kalhauge <kalhauge@cs.ucla.edu>
 synopsis: A tool for reducing Java Bytecode files 
 
-license: BSD-3
+license: BSD3
 license-file: LICENSE
 category: Language, Java, JVM
 github: ucla-pls/jvmhs

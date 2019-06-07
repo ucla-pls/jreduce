@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 0c0623750e1b1523266414790494bc63ac602855d637b38d97ae5e9570b04721
+-- hash: 51f4bf2bf6b3b186b1bec222d6edcdf0f26a299546f8f0e54428214800ac267c
 
 name:           jreduce
 version:        0.0.1
@@ -15,7 +15,7 @@ homepage:       https://github.com/ucla-pls/jvmhs#readme
 bug-reports:    https://github.com/ucla-pls/jvmhs/issues
 author:         Christian Gram Kalhauge
 maintainer:     Christian Gram Kalhauge <kalhauge@cs.ucla.edu>
-license:        MIT
+license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
 

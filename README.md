@@ -2,34 +2,66 @@
 
 JReduce is a tool for reducing Java class files and jar files.
 
+## Installation
+
+JReduce is most easily installed with
+[stack](https://docs.haskellstack.org/en/stable/README/).
+
+```
+stack install
+```
 
 ## Usage
+
+JReduce can reduce Java files given a predicate. A predicate is any
+program you can think of, but often it is a bash script. 
+
+```
+jreduce -o ouput.jar input.jar ./predicate.sh %anotherfile.txt {} 
+```
+
+JReduce will now try to produce the smallest jar-file that satisfies the
+predicate. The predicate will be run in separated workspaces so that
+they do not interfere with each other. In this case the `{}` will be
+substituted with an unpacked and reduced folder of classes, and 
+the `%` prefix means that the input is a file. Like this:
+
+```
+/abs/path/to/predicate.sh /abs/path/to/anotherfile.txt reduced_input/
+```
+
+We can describe the criteria of success by using `--stdout`, `--stderr`,
+or `--exit-code ?`. If `--stdout`, and `--stder` is on the reducer will
+keep the output the same.
+
+There are a lot of extra options which can be explored by running
+`jreduce -h`:
 
 ```
 jreduce
 
-Usage: jreduce [-v] [-q] [-D|--log-depth ARG] [-c|--core CORE] [--cp CLASSPATH]
-               [--stdlib] [--jre JRE] (-t|--target FILE) [-o|--output FILE]
-               [-r|--recursive] [-S|--strategy ARG] [-R|--reducer ARG]
-               [-E|--exit-code CODE] [--stdout] [--stderr] [--total-time SECS]
-               [--max-iterations ITERS] [-W|--work-folder ARG]
-               [-K|--keep-folders] [--metrics ARG] [-T|--timelimit SECS] CMD
-               [ARG..]
+Usage: jreduce INPUT [...] CMD [ARG..]
   A command line tool for reducing java programs.
 
 Available options:
+  INPUT                    the path to the jar or folder to reduce.
   -v                       make it more verbose.
   -q                       make it more quiet.
   -D,--log-depth ARG       set the log depth. (default: -1)
-  -c,--core CORE           the core classes to not reduce.
-  --cp CLASSPATH           the library classpath, of things not reduced.
-  --stdlib                 load the standard library.
+  -c,--core CORE           the core classes to not reduce. Can add a file of
+                           classes with prepending @.
+  --cp CLASSPATH           the library classpath of things not reduced. This is
+                           useful if the core files is not in the reduction,
+                           like when you arereducing a library using a
+                           test-suite
+  --stdlib                 load the standard library? This is unnecessary for
+                           most reductions.
   --jre JRE                the location of the stdlib.
-  -t,--target FILE         the path to the jar or folder to reduce.
-  -o,--output FILE         the path output folder.
+  -o,--output FILE         set the output path.
   -r,--recursive           remove other files and reduce internal jars.
-  -S,--strategy ARG        reduce by class instead of by
-                           closure. (default: byclosure)
+  -S,--strategy STRATEGY   reduce by class instead of by closure (default:
+                           closure).Choose between closure, reject-item, and
+                           item.
   -R,--reducer ARG         the reducing algorithm to use. (default: Binary)
   -E,--exit-code CODE      preserve exit-code (default: 0)
   --stdout                 preserve stdout.
