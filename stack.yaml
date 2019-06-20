@@ -12,12 +12,12 @@ packages:
     git: https://github.com/ucla-pls/jvmhs.git
     subdirs:
       - jvmhs
-    commit: 37e069cc02a249225d3cc0fcc3acc3083a1c8682
+    commit: 12cb4e7a97a509e4494a560f699bf1bb1127b34f 
   extra-dep: true
 extra-deps: 
 - fgl-visualize-0.1.0.1
 - dotgen-0.4.2
-- jvm-binary-0.4.0
+- jvm-binary-0.5.0
 flags: {}
 extra-package-dbs:
 build:
