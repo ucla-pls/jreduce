@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 51f4bf2bf6b3b186b1bec222d6edcdf0f26a299546f8f0e54428214800ac267c
+-- hash: 94f3f72afe50a97004b14633ba86dbddf13a232e9ddb1822f400c0fa5979c318
 
 name:           jreduce
 version:        0.0.1
@@ -36,6 +36,7 @@ library
     , cassava
     , containers
     , deepseq
+    , dirtree
     , filepath
     , jvmhs
     , lens
@@ -64,6 +65,7 @@ executable jreduce
     , cassava
     , containers
     , deepseq
+    , dirtree
     , filepath
     , jreduce
     , jvmhs

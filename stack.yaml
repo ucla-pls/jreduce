@@ -3,7 +3,7 @@ packages:
 - .
 - location: 
     git: https://github.com/ucla-pls/reduce.git
-    commit: 471a89c5174a4410a613c0768eb8760ca8343af8
+    commit:  ef72213e8159f3f4a0414ec6bdec3195f1f5f752
     subdirs:
       - reduce
       - reduce-util
@@ -12,12 +12,13 @@ packages:
     git: https://github.com/ucla-pls/jvmhs.git
     subdirs:
       - jvmhs
-    commit: 12cb4e7a97a509e4494a560f699bf1bb1127b34f 
+    commit: 8468ee042b2e04fd387ad92213fbb68805dd903c
   extra-dep: true
 extra-deps: 
 - fgl-visualize-0.1.0.1
 - dotgen-0.4.2
-- jvm-binary-0.5.0
+- jvm-binary-0.6.1
+- dirtree-0.1.0
 flags: {}
 extra-package-dbs:
 build:
