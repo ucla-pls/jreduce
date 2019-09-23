@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 94f3f72afe50a97004b14633ba86dbddf13a232e9ddb1822f400c0fa5979c318
+-- hash: 185a1899083576eb686dfde553db3627c66c934207515b7b82a4f34942e448a7
 
 name:           jreduce
 version:        0.0.1
@@ -25,11 +25,17 @@ source-repository head
 
 library
   exposed-modules:
+      ClassReduction
       JReduce
+      JReduce.OverAll
+      JReduce.OverClasses
+      JReduce.OverStubs
+      JReduce.Target
   other-modules:
       Paths_jreduce
   hs-source-dirs:
       src
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints
   build-depends:
       base >=4.10 && <4.13
     , bytestring
@@ -38,6 +44,7 @@ library
     , deepseq
     , dirtree
     , filepath
+    , jvm-binary
     , jvmhs
     , lens
     , lens-action
@@ -47,6 +54,7 @@ library
     , reduce-util
     , text
     , time
+    , transformers
     , unliftio
     , unordered-containers
     , zip-archive
@@ -58,7 +66,7 @@ executable jreduce
       Paths_jreduce
   hs-source-dirs:
       app
-  ghc-options: -O2 -threaded
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -O2 -threaded
   build-depends:
       base >=4.10 && <4.13
     , bytestring
@@ -68,6 +76,7 @@ executable jreduce
     , dirtree
     , filepath
     , jreduce
+    , jvm-binary
     , jvmhs
     , lens
     , lens-action
@@ -77,6 +86,7 @@ executable jreduce
     , reduce-util
     , text
     , time
+    , transformers
     , unliftio
     , unordered-containers
     , zip-archive

@@ -1,24 +1,20 @@
 resolver: lts-12.26
 packages:
 - .
-- location: 
-    git: https://github.com/ucla-pls/reduce.git
-    commit:  ef72213e8159f3f4a0414ec6bdec3195f1f5f752
-    subdirs:
-      - reduce
-      - reduce-util
-  extra-dep: true
-- location: 
-    git: https://github.com/ucla-pls/jvmhs.git
-    subdirs:
-      - jvmhs
-    commit: 8468ee042b2e04fd387ad92213fbb68805dd903c
-  extra-dep: true
-extra-deps: 
+extra-deps:
 - fgl-visualize-0.1.0.1
 - dotgen-0.4.2
-- jvm-binary-0.6.1
+- jvm-binary-0.7.0
 - dirtree-0.1.0
+- git: https://github.com/ucla-pls/jvmhs.git
+  subdirs:
+    - jvmhs
+  commit: 4b73c02e63041c614d39e9786c68eff326a6d021
+- git: https://github.com/ucla-pls/reduce.git
+  commit: f04edb0230411bc93bba490bd9b1880623a81d55
+  subdirs:
+    - reduce
+    - reduce-util
 flags: {}
 extra-package-dbs:
 build:

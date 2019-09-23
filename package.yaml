@@ -18,6 +18,7 @@ dependencies:
   - jvmhs
   - optparse-applicative
   - mtl
+  - transformers
   - unordered-containers
   - lens
   - lens-action
@@ -31,9 +32,17 @@ dependencies:
   - cassava
   - dirtree
   - time
+  - jvm-binary
 
 library:
   source-dirs: src
+
+ghc-options: 
+ - -Wall
+ - -Wcompat
+ - -Wincomplete-record-updates
+ - -Wincomplete-uni-patterns
+ - -Wredundant-constraints
 
 executables:
   jreduce:
