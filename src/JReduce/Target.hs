@@ -1,5 +1,6 @@
 -- |
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE DeriveGeneric #-}
 
@@ -40,11 +41,12 @@ data Content
   | MetaData !BL.ByteString
   deriving (Show, Eq, Generic)
 
+makePrisms ''Content
+
 instance NFData Content
 
 -- | We define the target of the reduction as
 type Target = DirTree Content
-
 
 deepenTarget :: DirTree BL.ByteString -> IO Target
 deepenTarget = imapM (readTargetFile . fileKeyToPath) where

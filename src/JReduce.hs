@@ -33,19 +33,14 @@ import           Control.Reduce
 -- casava
 import qualified Data.Csv as C
 
-
 -- reduce-util
 import           Control.Reduce.Util
 import           Control.Reduce.Util.Logger            as L
 import           Control.Reduce.Util.OptParse
 import           Control.Reduce.Metric
-import           Control.Reduce.Command
 
 -- dirtree
 import           System.DirTree
-
--- unordered-containers
-import qualified Data.HashSet                          as HashSet
 
 -- containers
 import qualified Data.IntSet                           as IS
@@ -53,148 +48,16 @@ import qualified Data.IntSet                           as IS
 -- base
 import           Data.Maybe
 import           Data.Monoid
-import           Data.Char
 
 -- jvmhs
 import           Jvmhs
 
+-- jreduce
 import JReduce.Target
-
+import JReduce.Config
 import qualified JReduce.OverAll
 import qualified JReduce.OverClasses
 import qualified JReduce.OverStubs
-
-data Strategy
-  = OverClasses
-  | OverAll
-  | OverStubs
-  deriving (Ord, Eq, Show)
-
-parseStrategy :: Parser Strategy
-parseStrategy =
-  option strategyReader
-  $ short 'S'
-  <> long "strategy"
-  <> metavar "STRATEGY"
-  <> hidden
-  <> help ( "reduce by different granularity (default: all)." ++
-            "Choose between class, stubs, and all." )
-  <> value OverAll
-  where
-    strategyReader :: ReadM Strategy
-    strategyReader = maybeReader $ \s ->
-      case map toLower s of
-        "class" -> Just OverClasses
-        "all"  -> Just OverAll
-        "stub" -> Just OverStubs
-        _ -> Nothing
-
-data Config = Config
-  { _cfgLogger           :: !L.LoggerConfig
-  , _cfgCore             :: !(HashSet.HashSet ClassName)
-  , _cfgClassPath        :: ![ FilePath ]
-  , _cfgUseStdlib        :: !Bool
-  , _cfgJreFolder        :: !(Maybe FilePath)
-  , _cfgTarget           :: !FilePath
-  , _cfgOutput           :: !(Maybe FilePath)
-  , _cfgStrategy         :: !Strategy
-  , _cfgReducerName      :: !ReducerName
-  , _cfgWorkFolder       :: !WorkFolder
-  , _cfgPredicateOptions :: !PredicateOptions
-  , _cfgReductionOptions :: !ReductionOptions
-  , _cfgCmdTemplate      :: !CmdTemplate
-  } deriving (Show)
-
-makeClassy ''Config
-
-instance HasLogger Config where
-  loggerL = cfgLogger
-
-instance HasPredicateOptions Config where
-  predicateOptions = cfgPredicateOptions
-
-instance HasReductionOptions Config where
-  reductionOptions = cfgReductionOptions
-
-
-configParser :: Parser (IO Config)
-configParser = do
-  _cfgTarget <-
-    strArgument
-    $ metavar "INPUT"
-    <> help "the path to the jar or folder to reduce."
-
-  _cfgLogger <- parseLoggerConfig
-
-  ioCore <-
-    fmap readClassNames . many . strOption
-    $ short 'c'
-    <> long "core"
-    <> metavar "CORE"
-    <> hidden
-    <> help "the core classes to not reduce. Can add a file of classes by prefixing @."
-
-  _cfgClassPath <-
-    fmap concat . many
-    . fmap splitClassPath
-    . strOption
-    $ long "cp"
-      <> hidden
-      <> metavar "CLASSPATH"
-      <> help ("the library classpath of things not reduced. "
-               ++ "This is useful if the core files is not in the reduction, like when you are"
-               ++ " reducing a library using a test-suite"
-               )
-
-  _cfgUseStdlib <-
-    switch $ long "stdlib"
-    <> hidden
-    <> help "load the standard library? This is unnecessary for most reductions."
-
-  _cfgJreFolder <-
-    optional . strOption $ long "jre"
-    <> hidden
-    <> metavar "JRE"
-    <> help "the location of the stdlib."
-
-  _cfgOutput <-
-    parseOutputFile
-
-  -- _cfgRecursive <-
-  --   switch $
-  --   long "recursive"
-  --   <> short 'r'
-  --   <> hidden
-  --   <> help "remove other files and reduce internal jars."
-
-  _cfgWorkFolder <-
-    parseWorkFolder "jreduce"
-
-  _cfgStrategy <-
-    parseStrategy
-
-  _cfgReducerName <-
-    parseReducerName
-
-  _cfgReductionOptions <-
-    parseReductionOptions
-
-  _cfgPredicateOptions <-
-    parsePredicateOptions
-
-  ioCmdTemplate <-
-    parseCmdTemplate
-
-  pure $ do
-    _cfgCore <- ioCore
-    _cfgCmdTemplate <- either fail return =<< ioCmdTemplate
-    return $ Config {..}
-
-  where
-    readClassNames classnames' =
-      fmap (HashSet.fromList . map strCls . concat) . forM classnames' $ \case
-        '@':filename -> lines <$> readFile filename
-        cn           -> return [cn]
 
 main :: IO ()
 main = do
@@ -205,7 +68,7 @@ main = do
     <> progDesc "A command line tool for reducing java programs."
     )
 
-  runReaderT run cfg
+  runReaderT (L.phase "JReduce" $ run) cfg
 
 newtype DirTreeMetric = DirTreeMetric Int
 
@@ -224,6 +87,8 @@ run :: ReaderT Config IO ()
 run = do
   Config {..} <- ask
 
+  preloader <- preloadClasses
+
   result <- withWorkFolder _cfgWorkFolder $ \wf -> do
 
     p0 <- orFail "Couldn't run problem in time"
@@ -236,7 +101,7 @@ run = do
           $ p1
 
     p3 <- p2 & case _cfgStrategy of
-      OverAll -> JReduce.OverAll.describeProblem wf
+      OverAll -> JReduce.OverAll.describeProblem (ReaderOptions False preloader) wf
       OverClasses -> pure . JReduce.OverClasses.describeProblem
       OverStubs -> pure . JReduce.OverStubs.describeProblem
 
@@ -262,4 +127,29 @@ run = do
 
     orFail msg = maybe (fail msg) return
 
+preloadClasses :: ReaderT Config IO ClassPreloader
+preloadClasses = L.phase "Preloading Classes" $ do
+  cls <- createClassLoader
+  (classreader, numclasses) <- liftIO $ do
+    classreader <- preload cls
+    numclasses <- length <$> classes classreader
+    return (classreader, numclasses)
+  L.debug $ "Found" <-> display numclasses <-> "classes."
+  return classreader
 
+-- | Create a class loader from the config
+createClassLoader ::
+  (HasConfig env, MonadReader env m, MonadIO m)
+  => m ClassLoader
+createClassLoader = do
+  cfg <- ask
+  let cp = cfg ^. cfgTarget : cfg ^. cfgClassPath
+  if cfg ^. cfgUseStdlib
+    then
+      case cfg ^. cfgJreFolder of
+        Nothing ->
+          liftIO $ fromClassPath cp
+        Just jre ->
+          liftIO $ fromJreFolder cp jre
+    else
+      return $ ClassLoader [] [] cp

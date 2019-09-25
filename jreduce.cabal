@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 185a1899083576eb686dfde553db3627c66c934207515b7b82a4f34942e448a7
+-- hash: 088f15ed63cd34bd6621ba30425793eff3f8db1992c657bae0d73ab6803fc64f
 
 name:           jreduce
 version:        0.0.1
@@ -25,8 +25,8 @@ source-repository head
 
 library
   exposed-modules:
-      ClassReduction
       JReduce
+      JReduce.Config
       JReduce.OverAll
       JReduce.OverClasses
       JReduce.OverStubs
