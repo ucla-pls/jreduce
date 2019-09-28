@@ -48,6 +48,7 @@ import qualified Data.IntSet                           as IS
 -- base
 import           Data.Maybe
 import           Data.Monoid
+import           GHC.IO.Encoding (setLocaleEncoding, utf8)
 
 -- jvmhs
 import           Jvmhs
@@ -61,6 +62,8 @@ import qualified JReduce.OverStubs
 
 main :: IO ()
 main = do
+  setLocaleEncoding utf8
+
   cfg <- join . execParser $
     A.info (configParser <**> helper)
     ( fullDesc
