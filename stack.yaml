@@ -1,4 +1,4 @@
-resolver: lts-12.26
+resolver: lts-13.19
 packages:
 - .
 extra-deps:
@@ -9,7 +9,7 @@ extra-deps:
 - git: https://github.com/ucla-pls/jvmhs.git
   subdirs:
     - jvmhs
-  commit: 29890cea56693dd25a1b5978bdd4d8827ba8c9e3
+  commit: f594d564e62a8a4aa0491004a77a284a7d796b39
 - git: https://github.com/ucla-pls/reduce.git
   commit: b12fa6519d1ad20c85ed5be1177f7e7610aafd93
   subdirs:

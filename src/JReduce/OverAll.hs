@@ -58,6 +58,7 @@ import qualified Control.Reduce.Util.Logger as L
 -- jvmhs
 import Jvmhs.Data.Named
 import Jvmhs.Data.Code
+import Jvmhs.Data.Signature
 import Jvmhs.Transform.Stub
 
 -- jvm-binary
@@ -71,10 +72,10 @@ import JReduce.Config
 
 data Item
   = IContent Content
-  | ICode (AbsMethodName, Code)
+  | ICode ((Class, AbsMethodName), Code)
   | ITarget Target
-  | ISuperClass (Class, ClassName)
-  | IImplements ClassName
+  | ISuperClass (Class, ClassType)
+  | IImplements (Class, ClassType)
   | IField (Class, Field)
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
@@ -88,7 +89,7 @@ instance C.ToField ([Int], Item) where
       IContent (ClassFile c) ->
         BS.stringUtf8 (Text.unpack $ c^.className.fullyQualifiedName)
       IContent (MetaData _) -> "metadata"
-      ICode (m, _) ->
+      ICode ((_, m), _) ->
         BS.stringUtf8 (Text.unpack $ absMethodNameToText m )
         <> "!code"
       ITarget _ -> "base"
@@ -98,8 +99,8 @@ instance C.ToField ([Int], Item) where
       IInnerClass (_, ic) ->
         BS.stringUtf8 (Text.unpack $ ic^.innerClass.fullyQualifiedName)
         <> "!isinner"
-      IImplements ic ->
-        BS.stringUtf8 (Text.unpack $ ic^.fullyQualifiedName) <> "!implemented"
+      IImplements (_, ic) ->
+        BS.stringUtf8 (Text.unpack $ ic^.classTypeName.fullyQualifiedName) <> "!implemented"
       IField (c, field) ->
         BS.stringUtf8
           . Text.unpack
@@ -117,9 +118,9 @@ makePrisms ''Item
 data Fact
   = ClassExist ClassName
   | CodeIsUntuched AbsMethodName
-  | HasSuperClass ClassName
+  | IsSuperClass ClassName
   | FieldExist AbsFieldName
-  | IsInnerClass ClassName
+  | IsInnerClass ClassName ClassName
   | MethodExist AbsMethodName
   | IsImplemented ClassName
   deriving (Eq, Ord)
@@ -128,9 +129,9 @@ instance C.ToField Fact where
   toField = \case
     ClassExist _ -> "class"
     CodeIsUntuched _ -> "unstubbed"
-    HasSuperClass _ -> "hassuper"
+    IsSuperClass _ -> "issuper"
     FieldExist _ -> "field"
-    IsInnerClass _ -> "isinnerclass"
+    IsInnerClass _ _ -> "isinnerclass"
     IsImplemented _ -> "isimplemented"
     MethodExist _ -> "method"
 
@@ -142,23 +143,22 @@ targetClasses = toListOf (folded.go)
 
 
 describeProblem ::
-  (MonadReader Config m, MonadIO m, ClassReader r)
-  => ReaderOptions r
-  -> FilePath
+  MonadIOReader Config m
+  => FilePath
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
-describeProblem r wf p = do
-
-  let
-    targets = targetClasses $ _problemInitial p
-    scope = S.fromList . map (view className) $ targets
+describeProblem wf p = do
+  let targets = targetClasses $ _problemInitial p
+  let scope = S.fromList . map (view className) $ targets
 
   hry <- L.phase "Calculating the hierachy" $ do
+    r <- preloadClasses
+
     hry <- fmap (snd . fst) . flip runClassPoolT
       (HM.fromList [ (c^.className, c) | c <- targets])
       $ do
       L.phase "Loading classes in class path" .  void 
-        $ loadClassesFromReader r
+        $ loadClassesFromReader (ReaderOptions False r)
       getHierarchy
 
     L.debug $ "Hierachy calculated, processed #"
@@ -186,29 +186,43 @@ classInitializers :: Fold Class AbsMethodName
 classInitializers =
   classAbsMethodNames . filtered (elemOf methodId "<clinit>")
 
+
+
+
 keyFun :: S.Set ClassName -> Hierarchy -> Item -> (Maybe Fact, [Fact])
 keyFun scope hry = \case
   IContent (ClassFile cls) ->
     ( Just (ClassExist $ cls ^.className)
     , concat
       [ (( classBootstrapMethods . traverse . classNames
+         <> classTypeParameters . traverse . classNames
           <> classEnclosingMethod . _Just . (_1 <> _2 . _Just . classNames)
-          <> classSignature . _Just . classNames
-        ) . to ClassExist) `toListOf` cls
+        ) . to (makeClassExist cls) )
+        `toListOf` cls
       , if cls ^. classAccessFlags . contains CEnum
         then cls ^.. classAbsFieldNames . to FieldExist
         else []
-      , [ IsInnerClass (cls ^. className) ]
-      , [ MethodExist m'
+      , [ MethodExist mname
         | m <- cls ^. classMethods
-        , m' <- maybeToList $
-          declaration hry (mkAbsMethodName (cls^.className) (m^.name))
+        , let mname = (mkAbsMethodName (cls^.className) (m^.name))
+        , m' <- declarations hry mname
         , not (scope ^. contains (m' ^.inClassName))
         ]
-      , [ HasSuperClass (cls ^. className) ]
-      , [ IsImplemented (cls ^. className) | cls ^. classAccessFlags . contains CInterface ]
+        -- If the class is an innerclass it needs to reference that
+      , [ IsInnerClass (cls ^.className) (cls ^.className) ]
+        -- If you can not remove the super class, don't remove the
+        -- annotation
+      , [ IsSuperClass (cls ^. className) ]
+      , [ IsSuperClass cn
+        | cn <- cls ^.. classSuper.folded.classTypeName
+        , not (scope ^. contains cn)
+        ]
+        -- If you cannot remove the interface class, don't remove the
+        -- annotation
+      , [ IsImplemented (cls ^. className)
+        | cls ^. classAccessFlags . contains CInterface ]
       , [ IsImplemented cn
-        | cn <- cls ^. classInterfaces
+        | cn <- cls ^.. classInterfaces.folded.classTypeName
         , not (scope ^. contains cn)
         ]
 
@@ -223,9 +237,12 @@ keyFun scope hry = \case
       ]
     )
 
-  ISuperClass (cls, cn) ->
-    ( Just (HasSuperClass $ cls^.className)
-    , ClassExist cn : map CodeIsUntuched (toListOf classConstructors cls)
+  ISuperClass (cls, ct) ->
+    ( Just (IsSuperClass $ ct ^.classTypeName)
+    , concat
+      [ map CodeIsUntuched (toListOf classConstructors cls)
+      , ct ^..classNames.to (makeClassExist cls)
+      ]
     )
 
   IField (cls, field) ->
@@ -247,23 +264,24 @@ keyFun scope hry = \case
     )
 
   -- You can remove an implements statement if you can remove the class
-  IImplements cn ->
-    ( Just (IsImplemented cn)
-    , [ClassExist cn]
+  IImplements (cls, ct) ->
+    ( Just (IsImplemented $ ct^.classTypeName)
+    , [ makeClassExist cls cn' | cn' <- ct^..classNames]
     )
 
-  IInnerClass (_, ic) ->
-    ( Just (IsInnerClass $ ic ^. innerClass)
+  IInnerClass (cls, ic) ->
+    ( Just (IsInnerClass (cls^.className) $ ic ^. innerClass)
     , toListOf (classNames . to ClassExist) ic
     )
 
   IMethod (c, m) ->
     ( Just . MethodExist $ mname
     , concat
-      [ map ClassExist $ toListOf methodClassNames m
+      [ map (makeClassExist c) $ toListOf methodClassNames m
       -- This rule is added to handle cases where the interface is generic.
       -- In this case an synthetic method with the correct types are created.
-      , [ CodeIsUntuched mname | m^.methodAccessFlags.contains MSynthetic ]
+      , [ CodeIsUntuched mname
+        | m^.methodAccessFlags.contains MSynthetic ]
 
       -- If a method is abstact find it's definitions.
       , [ MethodExist (mkAbsMethodName cn (m ^. name))
@@ -281,26 +299,32 @@ keyFun scope hry = \case
         <> methodExceptions . traverse
         <> methodSignature . _Just . classNames
 
-  ICode (m, code) ->
+  ICode ((cls, m), code) ->
     ( Just (CodeIsUntuched m)
-    , codeDependencies hry m code
+    , codeDependencies cls code
     )
 
   ITarget _ -> (Nothing, [])
   IContent _ -> (Nothing, [])
 
-codeDependencies :: Hierarchy -> AbsMethodName -> Code -> [Fact]
-codeDependencies hry m = toListOf
-  $ ( ( codeExceptionTable.folded.classNames
-        <> codeStackMap._Just.classNames
-        <> codeByteCode.folded.classNames
-      )
-      . to ClassExist
-    )
-  <> folding (const [ HasSuperClass (m^.inClassName) | m ^. methodId == "<init>"])
-  <> codeByteCode.folded.to B.opcode.folding processOpCode
 
   where
+    makeClassExist :: Class -> ClassName -> Fact
+    makeClassExist cls thcls
+      | has (fullyQualifiedName.to (Text.findIndex (=='$'))._Just) thcls
+      = IsInnerClass (cls^.className) thcls
+      | otherwise = ClassExist thcls
+
+    codeDependencies :: Class -> Code -> [Fact]
+    codeDependencies cls = toListOf
+      $ ( ( codeExceptionTable.folded.classNames
+            <> codeStackMap._Just.classNames
+            <> codeByteCode.folded.classNames
+          )
+          . to (makeClassExist cls)
+        )
+      <> codeByteCode.folded.to B.opcode.folding processOpCode
+
     processOpCode :: B.ByteCodeOpr B.High -> [Fact]
     processOpCode = \case
       B.Get _ f -> [FieldExist f]
@@ -324,7 +348,7 @@ itemR f' = \case
   IContent c ->
     fmap IContent <$> contentR f' c
   IMethod (c, m) ->
-    fmap (IMethod . (c,)) <$> (part $ methodR (c ^.className)) f' m
+    fmap (IMethod . (c,)) <$> (part $ methodR c) f' m
   a -> pure (Just a)
   where
     contentR :: PartialReduction Content Item
@@ -338,13 +362,14 @@ itemR f' = \case
 
     classR :: Reduction Class Item
     classR f c = do
-      (super :: Maybe ClassName) <- case c ^. classSuper of
-        Just "java/lang/Object" ->
-          pure $ Just "java/lang/Object"
-        Just a ->
+      (super :: Maybe ClassType) <- case c ^. classSuper of
+        Just a
+          | a ^. classTypeName == "java/lang/Object" ->
+            pure $ Just  a
+          | otherwise ->
            (payload c . reduceAs _ISuperClass) f a <&> \case
              Just a' -> Just a'
-             Nothing -> Just "java/lang/Object"
+             Nothing -> Just (ClassType "java/lang/Object" [])
         Nothing ->
           pure $ Nothing
 
@@ -358,7 +383,7 @@ itemR f' = \case
         (listR . payload c . reduceAs _IInnerClass) f (c ^. classInnerClasses)
 
       interfaces <-
-        (listR . reduceAs _IImplements) f (c ^. classInterfaces)
+        (listR . payload c . reduceAs _IImplements) f (c ^. classInterfaces)
 
       pure $ c
         & classSuper .~ super
@@ -367,10 +392,10 @@ itemR f' = \case
         & classInnerClasses .~ innerClasses
         & classInterfaces .~ interfaces
 
-    methodR :: ClassName -> Reduction Method Item
-    methodR cn f m =
+    methodR :: Class -> Reduction Method Item
+    methodR cls f m =
       case m ^. methodCode of
-        Just c -> f (ICode (mkAbsMethodName cn (m ^. name), c)) <&> \case
+        Just c -> f (ICode ((cls, mkAbsMethodName (cls ^.className) (m ^. name)), c)) <&> \case
           Just (ICode (_, c')) -> m & methodCode ?~ c'
           _ -> stub m
         _ -> pure m

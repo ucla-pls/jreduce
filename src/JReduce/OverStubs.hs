@@ -49,8 +49,8 @@ keyFun = \case
     ( Just (KClassName $ cls ^.className)
     , map KClassName
       . toListOf
-      ( classSuper . _Just
-        <> classInterfaces . traverse
+      ( classSuper . _Just . classNames
+        <> classInterfaces . traverse . classNames
         <> classFields . traverse . classNames
         <> classMethods . traverse . methodClassNames
         <> classBootstrapMethods . traverse . classNames

@@ -87,8 +87,6 @@ run :: ReaderT Config IO ()
 run = do
   Config {..} <- ask
 
-  preloader <- preloadClasses
-
   result <- withWorkFolder _cfgWorkFolder $ \wf -> do
 
     p0 <- orFail "Couldn't run problem in time"
@@ -96,12 +94,10 @@ run = do
 
     let p1 = meassure dirTreeMetric p0
 
-    p2 <- liftIO
-          . refineProblemA (fmap (Just . undeepenTarget,) . deepenTarget)
-          $ p1
+    p2 <- targetProblem $ p1
 
     p3 <- p2 & case _cfgStrategy of
-      OverAll -> JReduce.OverAll.describeProblem (ReaderOptions False preloader) wf
+      OverAll -> JReduce.OverAll.describeProblem wf
       OverClasses -> pure . JReduce.OverClasses.describeProblem
       OverStubs -> pure . JReduce.OverStubs.describeProblem
 
@@ -114,9 +110,8 @@ run = do
 
     return (fromJust $ _problemExtractBase p3 result)
 
-  return ()
   -- Output the results
-  -- outputResults result
+  outputResults result
 
   where
     outputResults target = do
@@ -126,30 +121,3 @@ run = do
         =<< findOutputFile inputFile possibleOutput
 
     orFail msg = maybe (fail msg) return
-
-preloadClasses :: ReaderT Config IO ClassPreloader
-preloadClasses = L.phase "Preloading Classes" $ do
-  cls <- createClassLoader
-  (classreader, numclasses) <- liftIO $ do
-    classreader <- preload cls
-    numclasses <- length <$> classes classreader
-    return (classreader, numclasses)
-  L.debug $ "Found" <-> display numclasses <-> "classes."
-  return classreader
-
--- | Create a class loader from the config
-createClassLoader ::
-  (HasConfig env, MonadReader env m, MonadIO m)
-  => m ClassLoader
-createClassLoader = do
-  cfg <- ask
-  let cp = cfg ^. cfgTarget : cfg ^. cfgClassPath
-  if cfg ^. cfgUseStdlib
-    then
-      case cfg ^. cfgJreFolder of
-        Nothing ->
-          liftIO $ fromClassPath cp
-        Just jre ->
-          liftIO $ fromJreFolder cp jre
-    else
-      return $ ClassLoader [] [] cp
