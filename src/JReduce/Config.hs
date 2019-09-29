@@ -41,7 +41,8 @@ import           Jvmhs
 
 data Strategy
   = OverClasses
-  | OverAll
+  | OverMethods
+  | OverInterfaces
   | OverStubs
   deriving (Ord, Eq, Show)
 
@@ -52,16 +53,18 @@ parseStrategy =
   <> long "strategy"
   <> metavar "STRATEGY"
   <> hidden
-  <> help ( "reduce by different granularity (default: all)." ++
-
-            "Choose between class, stubs, and all." )
-  <> value OverAll
+  <> help
+    ( "reduce by different granularity (default: all)."
+      ++ "Choose between class, stubs, and all."
+    )
+  <> value OverMethods
   where
     strategyReader :: ReadM Strategy
     strategyReader = maybeReader $ \s ->
       case map toLower s of
         "class" -> Just OverClasses
-        "all"  -> Just OverAll
+        "methods"  -> Just OverMethods
+        "interfaces"  -> Just OverInterfaces
         "stub" -> Just OverStubs
         _ -> Nothing
 

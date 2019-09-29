@@ -142,12 +142,14 @@ targetClasses = toListOf (folded.go)
     go = _ClassFile <> _Jar.folded.go
 
 
+
 describeProblem ::
   MonadIOReader Config m
   => FilePath
+  -> Bool
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
-describeProblem wf p = do
+describeProblem wf rmmethod p = do
   let targets = targetClasses $ _problemInitial p
   let scope = S.fromList . map (view className) $ targets
 
@@ -173,10 +175,10 @@ describeProblem wf p = do
   liftIO
     . BL.writeFile (wf </> "graph.csv")
     . writeCSV
-    . fst . reductionGraph (keyFun scope hry) itemR
+    . fst . reductionGraph (keyFun rmmethod scope hry) itemR
     $ _problemInitial p2
 
-  return (toGraphReductionDeep (keyFun scope hry) itemR p2)
+  return (toGraphReductionDeep (keyFun rmmethod scope hry) itemR p2)
 
 classConstructors :: Fold Class AbsMethodName
 classConstructors =
@@ -186,11 +188,8 @@ classInitializers :: Fold Class AbsMethodName
 classInitializers =
   classAbsMethodNames . filtered (elemOf methodId "<clinit>")
 
-
-
-
-keyFun :: S.Set ClassName -> Hierarchy -> Item -> (Maybe Fact, [Fact])
-keyFun scope hry = \case
+keyFun :: Bool -> S.Set ClassName -> Hierarchy -> Item -> (Maybe Fact, [Fact])
+keyFun rmmethods scope hry = \case
   IContent (ClassFile cls) ->
     ( Just (ClassExist $ cls ^.className)
     , concat
@@ -237,14 +236,6 @@ keyFun scope hry = \case
       ]
     )
 
-  ISuperClass (cls, ct) ->
-    ( Just (IsSuperClass $ ct ^.classTypeName)
-    , concat
-      [ map CodeIsUntuched (toListOf classConstructors cls)
-      , ct ^..classNames.to (makeClassExist cls)
-      ]
-    )
-
   IField (cls, field) ->
     ( Just (FieldExist $ mkAbsFieldName (cls^.className) (field^.name) )
     , flip toListOf field . fold $
@@ -263,15 +254,36 @@ keyFun scope hry = \case
       --ClassExist cn : map CodeIsUntuched (toListOf classConstructors cls)
     )
 
-  -- You can remove an implements statement if you can remove the class
-  IImplements (cls, ct) ->
-    ( Just (IsImplemented $ ct^.classTypeName)
-    , [ makeClassExist cls cn' | cn' <- ct^..classNames]
-    )
 
   IInnerClass (cls, ic) ->
     ( Just (IsInnerClass (cls^.className) $ ic ^. innerClass)
     , toListOf (classNames . to ClassExist) ic
+    )
+
+  -- You can remove an implements statement if you can remove the class
+  IImplements (cls, ct) ->
+    ( Just (IsImplemented $ ct^.classTypeName)
+    , concat
+      [ ct ^..classNames.to (makeClassExist cls)
+      , [ MethodExist (mkAbsMethodName (cls^.className) m)
+        | not rmmethods
+        , m <- cls^..classMethods.folded.name
+        , abstractDeclaration hry (mkAbsMethodName (ct^.classTypeName) m)
+        ]
+      ]
+    )
+
+  ISuperClass (cls, ct) ->
+    ( Just (IsSuperClass $ ct ^.classTypeName)
+    , concat
+      [ toListOf (classConstructors.to CodeIsUntuched) cls
+      , ct ^..classNames.to (makeClassExist cls)
+      , [ MethodExist (mkAbsMethodName (cls^.className) m)
+        | not rmmethods
+        , m <- cls^..classMethods.folded.name
+        , abstractDeclaration hry (mkAbsMethodName (ct^.classTypeName) m)
+        ]
+      ]
     )
 
   IMethod (c, m) ->
@@ -285,7 +297,8 @@ keyFun scope hry = \case
 
       -- If a method is abstact find it's definitions.
       , [ MethodExist (mkAbsMethodName cn (m ^. name))
-        | m ^. methodAccessFlags . contains MAbstract
+        | rmmethods -- But not if we remove them if we can remove the interface
+        , m ^. methodAccessFlags . contains MAbstract
         , cn <- HS.toList $ definitions hry mname
         , cn /= c ^. className
         ]

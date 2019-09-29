@@ -100,7 +100,8 @@ run = do
     p2 <- targetProblem $ p1
 
     p3 <- p2 & case _cfgStrategy of
-      OverAll -> JReduce.OverAll.describeProblem wf
+      OverMethods -> JReduce.OverAll.describeProblem wf True
+      OverInterfaces -> JReduce.OverAll.describeProblem wf False
       OverClasses -> pure . JReduce.OverClasses.describeProblem
       OverStubs -> pure . JReduce.OverStubs.describeProblem
 
