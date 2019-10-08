@@ -50,9 +50,6 @@ import           Data.Maybe
 import           Data.Monoid
 import           GHC.IO.Encoding (setLocaleEncoding, utf8)
 
--- jvmhs
-import           Jvmhs
-
 -- jreduce
 import JReduce.Target
 import JReduce.Config

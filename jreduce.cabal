@@ -1,10 +1,10 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.31.1.
+-- This file has been generated from package.yaml by hpack version 0.31.2.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 088f15ed63cd34bd6621ba30425793eff3f8db1992c657bae0d73ab6803fc64f
+-- hash: e308027e680b0949243f9d8e7d8b54146efe2b723ed52857ce9c90f70803c7cb
 
 name:           jreduce
 version:        0.0.1
@@ -57,6 +57,7 @@ library
     , transformers
     , unliftio
     , unordered-containers
+    , vector
     , zip-archive
   default-language: Haskell2010
 
@@ -89,5 +90,6 @@ executable jreduce
     , transformers
     , unliftio
     , unordered-containers
+    , vector
     , zip-archive
   default-language: Haskell2010

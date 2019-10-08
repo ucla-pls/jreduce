@@ -33,6 +33,7 @@ dependencies:
   - dirtree
   - time
   - jvm-binary
+  - vector
 
 library:
   source-dirs: src

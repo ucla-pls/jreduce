@@ -30,14 +30,13 @@ import qualified Data.HashSet as HS
 -- text
 import qualified Data.Text as Text
 
--- mtl
-import Control.Monad.Reader
-
 -- base
 import Data.Maybe
-import qualified Data.List as L
+import qualified Data.List as List
 import Data.Monoid
 import Data.Foldable
+import Control.Monad
+import Control.Monad.IO.Class
 
 -- filepath
 import System.FilePath
@@ -55,15 +54,23 @@ import Control.Reduce.Problem
 import Control.Reduce.Graph
 import qualified Control.Reduce.Util.Logger as L
 
+-- vector
+import qualified Data.Vector as V
+
 -- jvmhs
 import Jvmhs.Data.Named
 import Jvmhs.Data.Code
 import Jvmhs.Data.Signature
 import Jvmhs.Transform.Stub
+import Jvmhs.TypeCheck
+-- import Jvmhs.Data.Type
 
 -- jvm-binary
 import qualified Language.JVM.ByteCode as B
+import qualified Language.JVM.Type as B
 import qualified Language.JVM.Constant as B
+-- import qualified Language.JVM.Type as B
+-- import qualified Language.JVM.Attribute.StackMapTable as B
 
 -- jreduce
 import JReduce.Target
@@ -72,7 +79,7 @@ import JReduce.Config
 
 data Item
   = IContent Content
-  | ICode ((Class, AbsMethodName), Code)
+  | ICode ((Class, Method), Code)
   | ITarget Target
   | ISuperClass (Class, ClassType)
   | IImplements (Class, ClassType)
@@ -83,14 +90,14 @@ data Item
 instance C.ToField ([Int], Item) where
   toField (i, x) =
     BL.toStrict . BS.toLazyByteString
-    $ "|" <> BS.stringUtf8 (L.intercalate "|". map show . reverse $ i)
+    $ "|" <> BS.stringUtf8 (List.intercalate "|". map show . reverse $ i)
     <> " " <> case x of
       IContent (Jar _) -> "jar"
       IContent (ClassFile c) ->
         BS.stringUtf8 (Text.unpack $ c^.className.fullyQualifiedName)
       IContent (MetaData _) -> "metadata"
-      ICode ((_, m), _) ->
-        BS.stringUtf8 (Text.unpack $ absMethodNameToText m )
+      ICode ((cls, m), _) ->
+        BS.stringUtf8 (Text.unpack . absMethodNameToText . mkAbsMethodName (cls ^. className) $ m ^.methodName )
         <> "!code"
       ITarget _ -> "base"
       ISuperClass (c, _) ->
@@ -118,21 +125,21 @@ makePrisms ''Item
 data Fact
   = ClassExist ClassName
   | CodeIsUntuched AbsMethodName
-  | IsSuperClass ClassName
+  | HasSuperClass ClassName ClassName
+  | HasInterface ClassName ClassName
   | FieldExist AbsFieldName
-  | IsInnerClass ClassName ClassName
   | MethodExist AbsMethodName
-  | IsImplemented ClassName
+  | IsInnerClass ClassName ClassName
   deriving (Eq, Ord)
 
 instance C.ToField Fact where
   toField = \case
     ClassExist _ -> "class"
     CodeIsUntuched _ -> "unstubbed"
-    IsSuperClass _ -> "issuper"
+    HasSuperClass _ _ -> "super"
+    HasInterface _ _ -> "interface"
     FieldExist _ -> "field"
     IsInnerClass _ _ -> "isinnerclass"
-    IsImplemented _ -> "isimplemented"
     MethodExist _ -> "method"
 
 targetClasses :: Target -> [Class]
@@ -209,21 +216,22 @@ keyFun rmmethods scope hry = \case
         ]
         -- If the class is an innerclass it needs to reference that
       , [ IsInnerClass (cls ^.className) (cls ^.className) ]
-        -- If you can not remove the super class, don't remove the
-        -- annotation
-      , [ IsSuperClass (cls ^. className) ]
-      , [ IsSuperClass cn
-        | cn <- cls ^.. classSuper.folded.classTypeName
-        , not (scope ^. contains cn)
-        ]
-        -- If you cannot remove the interface class, don't remove the
-        -- annotation
-      , [ IsImplemented (cls ^. className)
-        | cls ^. classAccessFlags . contains CInterface ]
-      , [ IsImplemented cn
-        | cn <- cls ^.. classInterfaces.folded.classTypeName
-        , not (scope ^. contains cn)
-        ]
+
+      --   -- If you can not remove the super class, don't remove the
+      --   -- annotation
+      -- , [ IsSuperClass (cls ^. className) ]
+      -- , [ IsSuperClass cn
+      --   | cn <- cls ^.. classSuper.folded.classTypeName
+      --   , not (scope ^. contains cn)
+      --   ]
+      --   -- If you cannot remove the interface class, don't remove the
+      --   -- annotation
+      -- , [ IsImplemented (cls ^. className)
+      --   | cls ^. classAccessFlags . contains CInterface ]
+      -- , [ IsImplemented cn
+      --   | cn <- cls ^.. classInterfaces.folded.classTypeName
+      --   , not (scope ^. contains cn)
+      --   ]
 
       -- If a field is synthetic it can exist for multiple
       -- reasons:
@@ -262,7 +270,7 @@ keyFun rmmethods scope hry = \case
 
   -- You can remove an implements statement if you can remove the class
   IImplements (cls, ct) ->
-    ( Just (IsImplemented $ ct^.classTypeName)
+    ( Just (HasInterface (cls^.className) (ct^.classTypeName))
     , concat
       [ ct ^..classNames.to (makeClassExist cls)
       , [ MethodExist (mkAbsMethodName (cls^.className) m)
@@ -274,7 +282,7 @@ keyFun rmmethods scope hry = \case
     )
 
   ISuperClass (cls, ct) ->
-    ( Just (IsSuperClass $ ct ^.classTypeName)
+    ( Just (HasSuperClass (cls^.className) (ct^.classTypeName))
     , concat
       [ toListOf (classConstructors.to CodeIsUntuched) cls
       , ct ^..classNames.to (makeClassExist cls)
@@ -313,8 +321,8 @@ keyFun rmmethods scope hry = \case
         <> methodSignature . _Just . classNames
 
   ICode ((cls, m), code) ->
-    ( Just (CodeIsUntuched m)
-    , codeDependencies cls code
+    ( Just (CodeIsUntuched (mkAbsMethodName (cls^.className) $ m^.methodName))
+    , codeDependencies cls m code
     )
 
   ITarget _ -> (Nothing, [])
@@ -328,31 +336,108 @@ keyFun rmmethods scope hry = \case
       = IsInnerClass (cls^.className) thcls
       | otherwise = ClassExist thcls
 
-    codeDependencies :: Class -> Code -> [Fact]
-    codeDependencies cls = toListOf
-      $ ( ( codeExceptionTable.folded.classNames
+    codeDependencies :: Class -> Method -> Code -> [Fact]
+    codeDependencies cls m code =
+      toListOf
+        ( ( codeExceptionTable.folded.classNames
             <> codeStackMap._Just.classNames
             <> codeByteCode.folded.classNames
           )
           . to (makeClassExist cls)
-        )
-      <> codeByteCode.folded.to B.opcode.folding processOpCode
+        ) code ++ processingCode cls m code
 
-    processOpCode :: B.ByteCodeOpr B.High -> [Fact]
-    processOpCode = \case
-      B.Get _ f -> [FieldExist f]
-      B.Put _ f -> [FieldExist f]
-      B.Invoke a -> case a of
-        B.InvkSpecial (B.AbsVariableMethodId _ m') -> findMethod m'
-        B.InvkVirtual m' -> findMethod m'
-        B.InvkStatic  (B.AbsVariableMethodId _ m') -> findMethod m'
-        B.InvkInterface _ (B.AbsInterfaceMethodId m') -> findMethod m'
-        B.InvkDynamic (B.InvokeDynamic _ _) -> []
+
+    processingCode :: Class -> Method -> Code -> [Fact]
+    processingCode cls m code =
+      case typeCheck hry
+           (mkAbsMethodName (cls^.className) (m^.methodName))
+           (m^.methodAccessFlags.contains MStatic) code of
+        Left x -> error (show x)
+        Right vc ->
+          concat (V.zipWith (\ts c -> processOpCode ts (B.opcode c)) vc (code ^. codeByteCode))
+
+    processOpCode :: TypeCheckState -> B.ByteCodeOpr B.High -> [Fact]
+    processOpCode tcs = \case
+      B.ArrayStore _ ->
+        (tcs^?!tcStack.ix 0 `requireSubtype` tcs^?!tcStack.ix 2._VTObject._JTArray)
+      B.Get fa fid ->
+        [ FieldExist fid ]
+        ++ concat [ tcs^?!tcStack.ix 0 `requireSubtype` fid ^.inClassName | fa == B.FldField ]
+      B.Put fa fid ->
+        [ FieldExist fid ]
+        ++ ( tcs^?!tcStack.ix 0 `requireSubtype` fid ^. fieldType )
+        ++ concat [ tcs^?!tcStack.ix 0`requireSubtype` fid ^.inClassName | fa == B.FldField ]
+      B.Invoke a ->
+        case a of
+          B.InvkSpecial (B.AbsVariableMethodId _ m') ->
+            findMethod False m'
+          B.InvkVirtual m' ->
+            findMethod False m'
+          B.InvkStatic  (B.AbsVariableMethodId _ m') ->
+            findMethod False m'
+          B.InvkInterface _ (B.AbsInterfaceMethodId m') ->
+            findMethod True m'
+          B.InvkDynamic (B.InvokeDynamic _ m') ->
+            concat $ zipWith requireSubtype (tcs^.tcStack)
+            (reverse . map asTypeInfo $ (review _Binary m' :: MethodName)^.methodArgumentTypes)
+        where
+          findMethod :: Bool -> AbsMethodName -> [Fact]
+          findMethod isStatic m' =
+            [ MethodExist m'' | m'' <- maybeToList $ declaration hry m']
+            ++ (concat $ zipWith requireSubtype
+              (tcs^.tcStack)
+              (reverse $ [ asTypeInfo (m'^.inClassName) | not isStatic]
+               ++ map asTypeInfo (m'^.methodArgumentTypes))
+               )
+
+      B.Throw ->
+        ( tcs^?!tcStack.ix 0 `requireSubtype` ("java/lang/Throwable" :: ClassName))
+      B.InstanceOf trg ->
+        ( trg `requireSubtype` tcs^?!tcStack.ix 0)
+      B.CheckCast trg ->
+        ( trg `requireSubtype` tcs^?!tcStack.ix 0)
+
       _ -> []
 
+    infixl 5 `requireSubtype`
+    requireSubtype :: (AsTypeInfo a, AsTypeInfo b) => a -> b -> [Fact]
+    requireSubtype a' b' =
+      case (asTypeInfo a', asTypeInfo b') of
+        (VTObject a, VTObject b) -> a `requireSubReftype` b
+        (VTNull,     VTObject _) -> []
+        (a,          b         )
+          | a == b -> []
+          | otherwise -> error "Type error"
+
       where
-        findMethod m' =
-          [ MethodExist m'' | m'' <- maybeToList $ declaration hry m']
+        requireSubReftype = \case
+          B.JTClass s -> \case
+            B.JTClass "java/lang/Object" ->
+              -- A class will always extend java/lang/Object
+              []
+            B.JTClass t ->
+              [ case edge of
+                  Extend -> HasSuperClass cn1 cn2
+                  Implement -> HasInterface cn1 cn2
+              | (cn1, cn2, edge) <-
+                fromMaybe (error "Type error")
+                $ subclassPath hry (review _Binary s) (review _Binary t)
+              ]
+            _ -> error "Type error"
+          B.JTArray s -> \case
+            B.JTArray t ->
+              case (s, t) of
+                (JTRef s', JTRef t') -> s' `requireSubReftype` t'
+                _
+                  | s == t -> []
+                  | otherwise -> error "Type error"
+            B.JTClass t
+              | List.elem t
+                [ "java/lang/Object"
+                , "java/lang/Cloneable"
+                , "java.io.Serializable"] -> []
+              | otherwise -> error "Type error"
+
 
 itemR :: PartialReduction Item Item
 itemR f' = \case
@@ -408,7 +493,7 @@ itemR f' = \case
     methodR :: Class -> Reduction Method Item
     methodR cls f m =
       case m ^. methodCode of
-        Just c -> f (ICode ((cls, mkAbsMethodName (cls ^.className) (m ^. name)), c)) <&> \case
+        Just c -> f (ICode ((cls, m), c)) <&> \case
           Just (ICode (_, c')) -> m & methodCode ?~ c'
           _ -> stub m
         _ -> pure m

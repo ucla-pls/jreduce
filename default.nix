@@ -1,7 +1,8 @@
 { mkDerivation, base, bytestring, cassava, containers, deepseq
 , dirtree, filepath, hpack, jvm-binary, jvmhs, lens, lens-action
 , mtl, optparse-applicative, reduce, reduce-util, stdenv, text
-, time, transformers, unliftio, unordered-containers, zip-archive
+, time, transformers, unliftio, unordered-containers, vector
+, zip-archive
 }:
 mkDerivation {
   pname = "jreduce";
@@ -13,14 +14,14 @@ mkDerivation {
     base bytestring cassava containers deepseq dirtree filepath
     jvm-binary jvmhs lens lens-action mtl optparse-applicative reduce
     reduce-util text time transformers unliftio unordered-containers
-    zip-archive
+    vector zip-archive
   ];
   libraryToolDepends = [ hpack ];
   executableHaskellDepends = [
     base bytestring cassava containers deepseq dirtree filepath
     jvm-binary jvmhs lens lens-action mtl optparse-applicative reduce
     reduce-util text time transformers unliftio unordered-containers
-    zip-archive
+    vector zip-archive
   ];
   preConfigure = "hpack";
   homepage = "https://github.com/ucla-pls/jvmhs#readme";
