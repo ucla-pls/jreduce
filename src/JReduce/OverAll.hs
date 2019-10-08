@@ -378,9 +378,9 @@ keyFun es scope hry = \case
           B.InvkVirtual m' ->
             findMethod False m'
           B.InvkStatic  (B.AbsVariableMethodId _ m') ->
-            findMethod False m'
-          B.InvkInterface _ (B.AbsInterfaceMethodId m') ->
             findMethod True m'
+          B.InvkInterface _ (B.AbsInterfaceMethodId m') ->
+            findMethod False m'
           B.InvkDynamic (B.InvokeDynamic _ m') ->
             concat $ zipWith requireSubtype (tcs^.tcStack)
             (reverse . map asTypeInfo $ (review _Binary m' :: MethodName)^.methodArgumentTypes)
