@@ -100,14 +100,17 @@ instance C.ToField ([Int], Item) where
         BS.stringUtf8 (Text.unpack . absMethodNameToText . mkAbsMethodName (cls ^. className) $ m ^.methodName )
         <> "!code"
       ITarget _ -> "base"
-      ISuperClass (c, _) ->
-        BS.stringUtf8 (Text.unpack $ c^.className.fullyQualifiedName)
-        <> "!superclass"
       IInnerClass (_, ic) ->
         BS.stringUtf8 (Text.unpack $ ic^.innerClass.fullyQualifiedName)
         <> "!isinner"
-      IImplements (_, ic) ->
-        BS.stringUtf8 (Text.unpack $ ic^.classTypeName.fullyQualifiedName) <> "!implemented"
+      ISuperClass (cls, ic) ->
+        BS.stringUtf8 (Text.unpack $ cls^.className.fullyQualifiedName)
+        <> "<S]" <>
+        BS.stringUtf8 (Text.unpack $ ic^.classTypeName.fullyQualifiedName)
+      IImplements (cls, ic) ->
+        BS.stringUtf8 (Text.unpack $ cls^.className.fullyQualifiedName)
+        <> "<I]" <>
+        BS.stringUtf8 (Text.unpack $ ic^.classTypeName.fullyQualifiedName)
       IField (c, field) ->
         BS.stringUtf8
           . Text.unpack
