@@ -33,40 +33,9 @@ import           Control.Reduce.Command
 -- unordered-containers
 import qualified Data.HashSet                          as HashSet
 
--- base
-import           Data.Char
-
 -- jvmhs
 import           Jvmhs
 
-data Strategy
-  = OverClasses
-  | OverMethods
-  | OverInterfaces
-  | OverStubs
-  deriving (Ord, Eq, Show)
-
-parseStrategy :: Parser Strategy
-parseStrategy =
-  option strategyReader
-  $ short 'S'
-  <> long "strategy"
-  <> metavar "STRATEGY"
-  <> hidden
-  <> help
-    ( "reduce by different granularity (default: all)."
-      ++ "Choose between class, stubs, and all."
-    )
-  <> value OverMethods
-  where
-    strategyReader :: ReadM Strategy
-    strategyReader = maybeReader $ \s ->
-      case map toLower s of
-        "class" -> Just OverClasses
-        "methods"  -> Just OverMethods
-        "interfaces"  -> Just OverInterfaces
-        "stub" -> Just OverStubs
-        _ -> Nothing
 
 data Config = Config
   { _cfgLogger           :: !L.LoggerConfig
@@ -76,7 +45,6 @@ data Config = Config
   , _cfgJreFolder        :: !(Maybe FilePath)
   , _cfgTarget           :: !FilePath
   , _cfgOutput           :: !(Maybe FilePath)
-  , _cfgStrategy         :: !Strategy
   , _cfgReducerName      :: !ReducerName
   , _cfgWorkFolder       :: !WorkFolder
   , _cfgPredicateOptions :: !PredicateOptions
@@ -97,6 +65,35 @@ instance HasReductionOptions Config where
 
 type MonadIOReader env m = (MonadIO m, MonadReader env m)
 
+
+preloadClasses ::
+  (HasConfig env, HasLogger env, MonadIOReader env m)
+  => m ClassPreloader
+preloadClasses = L.phase "Preloading Classes" $ do
+  cls <- createClassLoader
+  (classreader, numclasses) <- liftIO $ do
+    classreader <- preload cls
+    numclasses <- length <$> classes classreader
+    return (classreader, numclasses)
+  L.debug $ "Found" <-> display numclasses <-> "classes."
+  return classreader
+
+-- | Create a class loader from the config
+createClassLoader ::
+  (HasConfig env, MonadIOReader env m)
+  => m ClassLoader
+createClassLoader = do
+  cfg <- ask
+  let cp = cfg ^. cfgTarget : cfg ^. cfgClassPath
+  if cfg ^. cfgUseStdlib
+    then
+      case cfg ^. cfgJreFolder of
+        Nothing ->
+          liftIO $ fromClassPath cp
+        Just jre ->
+          liftIO $ fromJreFolder cp jre
+    else
+      return $ ClassLoader [] [] cp
 
 configParser :: Parser (IO Config)
 configParser = do
@@ -151,9 +148,6 @@ configParser = do
   _cfgWorkFolder <-
     parseWorkFolder "jreduce"
 
-  _cfgStrategy <-
-    parseStrategy
-
   _cfgReducerName <-
     parseReducerName
 
@@ -176,32 +170,3 @@ configParser = do
       fmap (HashSet.fromList . map strCls . concat) . forM classnames' $ \case
         '@':filename -> lines <$> readFile filename
         cn           -> return [cn]
-
-preloadClasses ::
-  (HasConfig env, HasLogger env, MonadIOReader env m)
-  => m ClassPreloader
-preloadClasses = L.phase "Preloading Classes" $ do
-  cls <- createClassLoader
-  (classreader, numclasses) <- liftIO $ do
-    classreader <- preload cls
-    numclasses <- length <$> classes classreader
-    return (classreader, numclasses)
-  L.debug $ "Found" <-> display numclasses <-> "classes."
-  return classreader
-
--- | Create a class loader from the config
-createClassLoader ::
-  (HasConfig env, MonadIOReader env m)
-  => m ClassLoader
-createClassLoader = do
-  cfg <- ask
-  let cp = cfg ^. cfgTarget : cfg ^. cfgClassPath
-  if cfg ^. cfgUseStdlib
-    then
-      case cfg ^. cfgJreFolder of
-        Nothing ->
-          liftIO $ fromClassPath cp
-        Just jre ->
-          liftIO $ fromJreFolder cp jre
-    else
-      return $ ClassLoader [] [] cp

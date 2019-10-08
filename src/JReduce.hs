@@ -18,6 +18,9 @@ import           Control.Lens
 -- mtl
 import           Control.Monad.Reader
 
+-- text
+import qualified Data.Text as Text
+
 -- filepath
 import           System.FilePath
 
@@ -54,6 +57,7 @@ import           GHC.IO.Encoding (setLocaleEncoding, utf8)
 import JReduce.Target
 import JReduce.Config
 import qualified JReduce.OverAll
+import JReduce.OverAll (EdgeSelection (..))
 import qualified JReduce.OverClasses
 import qualified JReduce.OverStubs
 
@@ -61,14 +65,16 @@ main :: IO ()
 main = do
   setLocaleEncoding utf8
 
-  cfg <- join . execParser $
-    A.info (configParser <**> helper)
+  (strat, getConfig) <- execParser $
+    A.info (((,) <$> strategyParser <*> configParser) <**> helper)
     ( fullDesc
     <> header "jreduce"
     <> progDesc "A command line tool for reducing java programs."
     )
 
-  runReaderT (L.phase "JReduce" $ run) cfg
+  cfg <- getConfig
+
+  runReaderT (L.phase "JReduce" $ run strat) cfg
 
 newtype DirTreeMetric = DirTreeMetric Int
 
@@ -83,8 +89,8 @@ instance Metric DirTreeMetric where
     display (a `div` 1000) <> displayString " Kb"
 
 
-run :: ReaderT Config IO ()
-run = do
+run :: Strategy -> ReaderT Config IO ()
+run strat = do
   Config {..} <- ask
 
   result <- withWorkFolder _cfgWorkFolder $ \wf -> do
@@ -96,9 +102,8 @@ run = do
 
     p2 <- targetProblem $ p1
 
-    p3 <- p2 & case _cfgStrategy of
-      OverMethods -> JReduce.OverAll.describeProblem wf True
-      OverInterfaces -> JReduce.OverAll.describeProblem wf False
+    p3 <- p2 & case strat of
+      OverAll selection -> JReduce.OverAll.describeProblem wf selection
       OverClasses -> pure . JReduce.OverClasses.describeProblem
       OverStubs -> pure . JReduce.OverStubs.describeProblem
 
@@ -122,3 +127,37 @@ run = do
         =<< findOutputFile inputFile possibleOutput
 
     orFail msg = maybe (fail msg) return
+
+data Strategy
+  = OverClasses
+  | OverAll EdgeSelection
+  | OverStubs
+  deriving (Ord, Eq, Show)
+
+strategyParser :: Parser Strategy
+strategyParser =
+  option strategyReader
+  $ short 'S'
+  <> long "strategy"
+  <> metavar "STRATEGY"
+  <> hidden
+  <> help
+    ( "reduce by different granularity (default: all)."
+      ++ "Choose between class, stubs, and all."
+    )
+  <> value OverClasses
+  where
+    strategyReader :: ReadM Strategy
+    strategyReader = maybeReader $ \s ->
+      case Text.split (=='+') . Text.toLower . Text.pack $ s of
+        "classes":[] -> Just OverClasses
+        "stub":[] -> Just OverStubs
+        "all":rest -> Just $ OverAll (foldMap toEdgeSelection rest)
+        _ -> Nothing
+
+      where
+        toEdgeSelection = \case
+          "m2m" ->  mempty { edgeSelectMethodsToMethods = True }
+          "i2m" -> mempty { edgeSelectInterfacesToMethods = True }
+          "nostub" -> mempty { edgeSelectMethodsToCode = True }
+          _ -> mempty

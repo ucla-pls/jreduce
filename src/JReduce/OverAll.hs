@@ -152,14 +152,28 @@ targetClasses = toListOf (folded.go)
     go = _ClassFile <> _Jar.folded.go
 
 
+data EdgeSelection = EdgeSelection
+  { edgeSelectInterfacesToMethods :: Bool
+  , edgeSelectMethodsToMethods    :: Bool
+  , edgeSelectMethodsToCode       :: Bool
+  } deriving (Show, Eq, Ord)
+
+instance Semigroup EdgeSelection where
+  a <> b = EdgeSelection
+    (any edgeSelectInterfacesToMethods [a, b])
+    (any edgeSelectMethodsToMethods [a, b])
+    (any edgeSelectMethodsToCode [a, b])
+
+instance Monoid EdgeSelection where
+  mempty = EdgeSelection False False False
 
 describeProblem ::
   MonadIOReader Config m
   => FilePath
-  -> Bool
+  -> EdgeSelection
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
-describeProblem wf rmmethod p = do
+describeProblem wf es p = do
   let targets = targetClasses $ _problemInitial p
   let scope = S.fromList . map (view className) $ targets
 
@@ -185,10 +199,10 @@ describeProblem wf rmmethod p = do
   liftIO
     . BL.writeFile (wf </> "graph.csv")
     . writeCSV
-    . fst . reductionGraph (keyFun rmmethod scope hry) itemR
+    . fst . reductionGraph (keyFun es scope hry) itemR
     $ _problemInitial p2
 
-  return (toGraphReductionDeep (keyFun rmmethod scope hry) itemR p2)
+  return (toGraphReductionDeep (keyFun es scope hry) itemR p2)
 
 classConstructors :: Fold Class AbsMethodName
 classConstructors =
@@ -198,8 +212,8 @@ classInitializers :: Fold Class AbsMethodName
 classInitializers =
   classAbsMethodNames . filtered (elemOf methodId "<clinit>")
 
-keyFun :: Bool -> S.Set ClassName -> Hierarchy -> Item -> (Maybe Fact, [Fact])
-keyFun rmmethods scope hry = \case
+keyFun :: EdgeSelection -> S.Set ClassName -> Hierarchy -> Item -> (Maybe Fact, [Fact])
+keyFun es scope hry = \case
   IContent (ClassFile cls) ->
     ( Just (ClassExist $ cls ^.className)
     , concat
@@ -219,22 +233,6 @@ keyFun rmmethods scope hry = \case
         ]
         -- If the class is an innerclass it needs to reference that
       , [ IsInnerClass (cls ^.className) (cls ^.className) ]
-
-      --   -- If you can not remove the super class, don't remove the
-      --   -- annotation
-      -- , [ IsSuperClass (cls ^. className) ]
-      -- , [ IsSuperClass cn
-      --   | cn <- cls ^.. classSuper.folded.classTypeName
-      --   , not (scope ^. contains cn)
-      --   ]
-      --   -- If you cannot remove the interface class, don't remove the
-      --   -- annotation
-      -- , [ IsImplemented (cls ^. className)
-      --   | cls ^. classAccessFlags . contains CInterface ]
-      -- , [ IsImplemented cn
-      --   | cn <- cls ^.. classInterfaces.folded.classTypeName
-      --   , not (scope ^. contains cn)
-      --   ]
 
       -- If a field is synthetic it can exist for multiple
       -- reasons:
@@ -277,7 +275,7 @@ keyFun rmmethods scope hry = \case
     , concat
       [ ct ^..classNames.to (makeClassExist cls)
       , [ MethodExist (mkAbsMethodName (cls^.className) m)
-        | not rmmethods
+        | edgeSelectInterfacesToMethods es
         , m <- cls^..classMethods.folded.name
         , abstractDeclaration hry (mkAbsMethodName (ct^.classTypeName) m)
         ]
@@ -290,7 +288,7 @@ keyFun rmmethods scope hry = \case
       [ toListOf (classConstructors.to CodeIsUntuched) cls
       , ct ^..classNames.to (makeClassExist cls)
       , [ MethodExist (mkAbsMethodName (cls^.className) m)
-        | not rmmethods
+        | edgeSelectInterfacesToMethods es
         , m <- cls^..classMethods.folded.name
         , abstractDeclaration hry (mkAbsMethodName (ct^.classTypeName) m)
         ]
@@ -304,11 +302,14 @@ keyFun rmmethods scope hry = \case
       -- This rule is added to handle cases where the interface is generic.
       -- In this case an synthetic method with the correct types are created.
       , [ CodeIsUntuched mname
-        | m^.methodAccessFlags.contains MSynthetic ]
+        | m^.methodAccessFlags.contains MSynthetic
+          || edgeSelectMethodsToCode es
+        ]
+
 
       -- If a method is abstact find it's definitions.
       , [ MethodExist (mkAbsMethodName cn (m ^. name))
-        | rmmethods -- But not if we remove them if we can remove the interface
+        | edgeSelectMethodsToMethods es
         , m ^. methodAccessFlags . contains MAbstract
         , cn <- HS.toList $ definitions hry mname
         , cn /= c ^. className
