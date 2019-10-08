@@ -424,7 +424,7 @@ keyFun es scope hry = \case
                   Extend -> HasSuperClass cn1 cn2
                   Implement -> HasInterface cn1 cn2
               | (cn1, cn2, edge) <-
-                fromMaybe (error "Type error")
+                fromMaybe (error $ "Type error: " ++ show s ++ " !<: " ++ show t )
                 $ subclassPath hry (review _Binary s) (review _Binary t)
               ]
             _ -> error "Type error"
