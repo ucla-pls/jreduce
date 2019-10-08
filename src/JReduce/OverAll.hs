@@ -370,7 +370,7 @@ keyFun es scope hry = \case
       B.Put fa fid ->
         [ FieldExist fid ]
         ++ ( tcs^?!tcStack.ix 0 `requireSubtype` fid ^. fieldType )
-        ++ concat [ tcs^?!tcStack.ix 0`requireSubtype` fid ^.inClassName | fa == B.FldField ]
+        ++ concat [ tcs^?!tcStack.ix 1 `requireSubtype` fid ^.inClassName | fa == B.FldField ]
       B.Invoke a ->
         case a of
           B.InvkSpecial (B.AbsVariableMethodId _ m') ->
