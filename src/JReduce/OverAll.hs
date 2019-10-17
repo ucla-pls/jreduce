@@ -356,7 +356,7 @@ keyFun es scope hry = \case
       case typeCheck hry
            (mkAbsMethodName (cls^.className) (m^.methodName))
            (m^.methodAccessFlags.contains MStatic) code of
-        Left x -> error (show x)
+        Left x -> error (show (mkAbsMethodName (cls^.className) (m^.methodName)) ++ show x)
         Right vc ->
           concat (V.zipWith (\ts c -> processOpCode ts (B.opcode c)) vc (code ^. codeByteCode))
 
