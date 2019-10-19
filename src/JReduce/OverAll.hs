@@ -356,7 +356,12 @@ keyFun es scope hry = \case
       case typeCheck hry
            (mkAbsMethodName (cls^.className) (m^.methodName))
            (m^.methodAccessFlags.contains MStatic) code of
-        Left x -> error (show (mkAbsMethodName (cls^.className) (m^.methodName)) ++ show x)
+        Left (i, x) -> error
+          (show (mkAbsMethodName (cls^.className) (m^.methodName))
+            ++ " "
+            ++ show (code^?codeByteCode.ix i)
+            ++ " "
+            ++ show x)
         Right vc ->
           concat (V.zipWith (\ts c -> processOpCode ts (B.opcode c)) vc (code ^. codeByteCode))
 
@@ -441,7 +446,6 @@ keyFun es scope hry = \case
                 , "java/lang/Cloneable"
                 , "java.io.Serializable"] -> []
               | otherwise -> error "Type error"
-
 
 itemR :: PartialReduction Item Item
 itemR f' = \case
