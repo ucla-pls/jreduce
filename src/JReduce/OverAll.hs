@@ -29,12 +29,15 @@ import qualified Data.HashSet as HS
 
 -- text
 import qualified Data.Text as Text
+import qualified Data.Text.Lazy.Builder as Builder
+import qualified Data.Text.Lazy.Encoding as LazyText
 
 -- base
 import Data.Maybe
 import qualified Data.List as List
 import Data.Monoid
 import Data.Foldable
+import Data.String
 import Control.Monad
 import Control.Monad.IO.Class
 
@@ -46,7 +49,6 @@ import qualified Data.Csv as C
 
 -- bytestring
 import qualified Data.ByteString.Lazy.Char8 as BL
-import qualified Data.ByteString.Builder as BS
 
 -- reduce-util
 import Control.Reduce.Reduction
@@ -87,41 +89,51 @@ data Item
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
 
+
+displayItem :: Item -> Builder.Builder
+displayItem = \case
+  IContent (Jar _) -> "jar"
+  IContent (ClassFile c) ->
+    Builder.fromText (c^.className.fullyQualifiedName)
+  IContent (MetaData _) ->
+    "metadata"
+  ICode ((cls, m), _) ->
+    displayAbsMethodName cls m <> "!code"
+  ITarget _ -> "base"
+  IInnerClass (_, ic) ->
+    displayClassName (ic^.innerClass)
+    <> "!isinner"
+  ISuperClass (cls, ic) ->
+    displayClassName (cls^.className)
+    <> "<S]" <> displayClassName (ic^.classTypeName)
+  IImplements (cls, ic) ->
+    displayClassName (cls^.className)
+    <> "<I]" <> displayClassName (ic^.classTypeName)
+  IField (c, field) ->
+    Builder.fromText
+      . absFieldNameToText
+      $ mkAbsFieldName (c^.className) (field^.name)
+  IMethod (c, method) ->
+    displayAbsMethodName c method
+
+  where
+    displayAbsMethodName cls m =
+      Builder.fromText
+      . absMethodNameToText
+      . mkAbsMethodName (cls ^. className)
+      $ m ^.methodName
+
+    displayClassName cn = Builder.fromText (cn ^. fullyQualifiedName)
+
 instance C.ToField ([Int], Item) where
   toField (i, x) =
-    BL.toStrict . BS.toLazyByteString
-    $ "|" <> BS.stringUtf8 (List.intercalate "|". map show . reverse $ i)
-    <> " " <> case x of
-      IContent (Jar _) -> "jar"
-      IContent (ClassFile c) ->
-        BS.stringUtf8 (Text.unpack $ c^.className.fullyQualifiedName)
-      IContent (MetaData _) -> "metadata"
-      ICode ((cls, m), _) ->
-        BS.stringUtf8 (Text.unpack . absMethodNameToText . mkAbsMethodName (cls ^. className) $ m ^.methodName )
-        <> "!code"
-      ITarget _ -> "base"
-      IInnerClass (_, ic) ->
-        BS.stringUtf8 (Text.unpack $ ic^.innerClass.fullyQualifiedName)
-        <> "!isinner"
-      ISuperClass (cls, ic) ->
-        BS.stringUtf8 (Text.unpack $ cls^.className.fullyQualifiedName)
-        <> "<S]" <>
-        BS.stringUtf8 (Text.unpack $ ic^.classTypeName.fullyQualifiedName)
-      IImplements (cls, ic) ->
-        BS.stringUtf8 (Text.unpack $ cls^.className.fullyQualifiedName)
-        <> "<I]" <>
-        BS.stringUtf8 (Text.unpack $ ic^.classTypeName.fullyQualifiedName)
-      IField (c, field) ->
-        BS.stringUtf8
-          . Text.unpack
-          . absFieldNameToText
-          $ mkAbsFieldName (c^.className) (field^.name)
-
-      IMethod (c, method) ->
-        BS.stringUtf8
-          . Text.unpack
-          . absMethodNameToText
-          $ mkAbsMethodName (c^.className) (method^.name)
+    BL.toStrict $
+      LazyText.encodeUtf8
+      ( Builder.toLazyText (
+          "|" <> fromString (List.intercalate "|". map show . reverse $ i)
+          <> " " <> displayItem x
+          )
+      )
 
 makePrisms ''Item
 
@@ -193,17 +205,24 @@ describeProblem wf es p = do
 
     return hry
 
-  let
-    p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
+  let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
 
-  L.phase "Outputing graph: " $ do
-    liftIO
-      . BL.writeFile (wf </> "graph.csv")
-      . writeCSV
-      . fst . reductionGraph (keyFun es scope hry) itemR
-      $ _problemInitial p2
+  L.phase "Precalculating the Reduction" $ do
+    ((grph, cls), p3) <- toGraphReductionDeepM
+      ( \i -> L.phase ("Processing " <> displayItem i) $ do
+          let (mf, fs) = keyFun es scope hry i
+          -- L.debug $ "Key: " <> L.display mf
+          L.debug $ L.displayf "Number Of Edges: %d" (List.length fs)
+          pure (mf, fs)
+      ) itemR p2
 
-  return (toGraphReductionDeep (keyFun es scope hry) itemR p2)
+    L.phase "Outputing graph: " $ do
+      liftIO . BL.writeFile (wf </> "graph.csv") . writeCSV $ grph
+
+    L.info (L.displayf "Found Number of Closures: %d" $ List.length cls)
+
+    return p3
+
 
 classConstructors :: Fold Class AbsMethodName
 classConstructors =
