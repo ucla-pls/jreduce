@@ -196,11 +196,12 @@ describeProblem wf es p = do
   let
     p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
 
-  liftIO
-    . BL.writeFile (wf </> "graph.csv")
-    . writeCSV
-    . fst . reductionGraph (keyFun es scope hry) itemR
-    $ _problemInitial p2
+  L.phase "Outputing graph: " $ do
+    liftIO
+      . BL.writeFile (wf </> "graph.csv")
+      . writeCSV
+      . fst . reductionGraph (keyFun es scope hry) itemR
+      $ _problemInitial p2
 
   return (toGraphReductionDeep (keyFun es scope hry) itemR p2)
 

@@ -92,6 +92,7 @@ instance Metric DirTreeMetric where
 run :: Strategy -> ReaderT Config IO ()
 run strat = do
   Config {..} <- ask
+  L.info "Started JReduce."
 
   result <- withWorkFolder _cfgWorkFolder $ \wf -> do
 
@@ -107,12 +108,19 @@ run strat = do
       OverClasses -> pure . JReduce.OverClasses.describeProblem
       OverStubs -> pure . JReduce.OverStubs.describeProblem
 
-    (_failure, result) <- runReductionProblem (wf </> "reduction")
+    (failure, result) <- runReductionProblem (wf </> "reduction")
       (genericBinaryReduction (IS.size . IS.unions))
       . meassure (Count "scc" . maybe 0 length)
       $ p3
 
+    case failure of
+      Just msg ->
+        L.warn $ "Reduction failed: " <> display msg
+      Nothing ->
+        L.info $ "Reduction successfull."
+
     _ <- checkSolution (wf </> "final") p3 result
+
 
     return (fromJust $ _problemExtractBase p3 result)
 
