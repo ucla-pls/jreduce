@@ -150,8 +150,8 @@ strategyParser =
   <> metavar "STRATEGY"
   <> hidden
   <> help
-    ( "reduce by different granularity (default: all)."
-      ++ "Choose between class, stubs, and all."
+    ( "reduce by different granularity (default: deep)."
+      ++ "Choose between class, stubs, and deep."
     )
   <> value OverClasses
   where
@@ -160,7 +160,7 @@ strategyParser =
       case Text.split (=='+') . Text.toLower . Text.pack $ s of
         "classes":[] -> Just OverClasses
         "stub":[] -> Just OverStubs
-        "all":rest -> Just $ OverAll (foldMap toEdgeSelection rest)
+        "deep":rest -> Just $ OverAll (foldMap toEdgeSelection rest)
         _ -> Nothing
 
       where
