@@ -199,10 +199,8 @@ describeProblem wf es p = do
 
   L.phase "Precalculating the Reduction" $ do
     ((grph, cls), p3) <- toGraphReductionDeepM
-      ( \i -> L.phase ("Processing " <> displayItem i) $ do
+      ( \i -> L.logtime L.DEBUG ("Processing " <> displayItem i) $ do
           let (mf, fs) = keyFun es scope hry i
-          -- L.debug $ "Key: " <> L.display mf
-          L.debug $ L.displayf "Number Of Edges: %d" (List.length fs)
           pure (mf, fs)
       ) itemR p2
 
