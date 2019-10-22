@@ -377,7 +377,7 @@ keyFun es scope hry = \case
     processOpCode :: TypeCheckState -> B.ByteCodeOpr B.High -> [Fact]
     processOpCode tcs = \case
       B.ArrayStore _ ->
-        (tcs^?!tcStack.ix 0 `requireSubtype` tcs^?!tcStack.ix 2._VTObject._JTArray)
+        (tcs^?!tcStack.ix 0 `requireSubtype` tcs^?!tcStack.ix 2._TRef._Single._JTArray)
       B.Get fa fid ->
         [ FieldExist fid ]
         ++ concat [ tcs^?!tcStack.ix 0 `requireSubtype` fid ^.className | fa == B.FldField ]
@@ -418,12 +418,16 @@ keyFun es scope hry = \case
       _ -> []
 
     infixl 5 `requireSubtype`
-    requireSubtype :: (AsTypeInfo a, AsTypeInfo b) => a -> b -> [Fact]
+    requireSubtype ::
+      (AsTypeInfo a, AsTypeInfo b)
+      => a -> b -> [Fact]
     requireSubtype a' b' =
       case (asTypeInfo a', asTypeInfo b') of
-        (VTObject a, VTObject b) -> a `requireSubReftype` b
-        (VTNull,     VTObject _) -> []
-        (a,          b         )
+        (TRef as, TRef bs) -> concat
+          [ a `requireSubReftype` b
+          | a <- toList as, b <- toList bs
+          ]
+        (a         , b      )
           | a == b -> []
           | otherwise -> error "Type error"
 
