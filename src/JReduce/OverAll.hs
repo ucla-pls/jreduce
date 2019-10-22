@@ -410,10 +410,10 @@ keyFun es scope hry = \case
 
       B.Throw ->
         ( tcs^?!tcStack.ix 0 `requireSubtype` ("java/lang/Throwable" :: ClassName))
-      B.InstanceOf trg ->
-        ( trg `requireSubtype` tcs^?!tcStack.ix 0)
-      B.CheckCast trg ->
-        ( trg `requireSubtype` tcs^?!tcStack.ix 0)
+      -- B.InstanceOf trg ->
+      --   ( trg `requireSubtype` tcs^?!tcStack.ix 0)
+      -- B.CheckCast trg ->
+      --   ( trg `requireSubtype` tcs^?!tcStack.ix 0)
 
       _ -> []
 
