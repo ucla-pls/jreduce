@@ -60,19 +60,15 @@ import qualified Control.Reduce.Util.Logger as L
 import qualified Data.Vector as V
 
 -- jvmhs
-import Jvmhs.Data.Named
 import Jvmhs.Data.Code
 import Jvmhs.Data.Signature
 import Jvmhs.Transform.Stub
 import Jvmhs.TypeCheck
--- import Jvmhs.Data.Type
 
 -- jvm-binary
 import qualified Language.JVM.ByteCode as B
 import qualified Language.JVM.Type as B
 import qualified Language.JVM.Constant as B
--- import qualified Language.JVM.Type as B
--- import qualified Language.JVM.Attribute.StackMapTable as B
 
 -- jreduce
 import JReduce.Target
@@ -89,7 +85,6 @@ data Item
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
 
-
 displayItem :: Item -> Builder.Builder
 displayItem = \case
   IContent (Jar _) -> "jar"
@@ -98,7 +93,7 @@ displayItem = \case
   IContent (MetaData _) ->
     "metadata"
   ICode ((cls, m), _) ->
-    displayAbsMethodName cls m <> "!code"
+    displayAbsMethodId cls m <> "!code"
   ITarget _ -> "base"
   IInnerClass (_, ic) ->
     displayClassName (ic^.innerClass)
@@ -110,18 +105,13 @@ displayItem = \case
     displayClassName (cls^.className)
     <> "<I]" <> displayClassName (ic^.classTypeName)
   IField (c, field) ->
-    Builder.fromText
-      . absFieldNameToText
-      $ mkAbsFieldName (c^.className) (field^.name)
+    toBuilder $ mkAbsFieldId c field
   IMethod (c, method) ->
-    displayAbsMethodName c method
+    displayAbsMethodId c method
 
   where
-    displayAbsMethodName cls m =
-      Builder.fromText
-      . absMethodNameToText
-      . mkAbsMethodName (cls ^. className)
-      $ m ^.methodName
+    displayAbsMethodId cls m =
+      toBuilder $ mkAbsMethodId cls m
 
     displayClassName cn = Builder.fromText (cn ^. fullyQualifiedName)
 
@@ -139,11 +129,11 @@ makePrisms ''Item
 
 data Fact
   = ClassExist ClassName
-  | CodeIsUntuched AbsMethodName
+  | CodeIsUntuched AbsMethodId
   | HasSuperClass ClassName ClassName
   | HasInterface ClassName ClassName
-  | FieldExist AbsFieldName
-  | MethodExist AbsMethodName
+  | FieldExist AbsFieldId
+  | MethodExist AbsMethodId
   | IsInnerClass ClassName ClassName
   deriving (Eq, Ord)
 
@@ -223,14 +213,13 @@ describeProblem wf es p = do
 
     return p3
 
-
-classConstructors :: Fold Class AbsMethodName
+classConstructors :: Fold Class AbsMethodId
 classConstructors =
-  classAbsMethodNames . filtered (elemOf methodId "<init>")
+  classAbsMethodIds . filtered (elemOf methodName "<init>")
 
-classInitializers :: Fold Class AbsMethodName
+classInitializers :: Fold Class AbsMethodId
 classInitializers =
-  classAbsMethodNames . filtered (elemOf methodId "<clinit>")
+  classAbsMethodIds . filtered (elemOf methodName "<clinit>")
 
 keyFun :: EdgeSelection -> S.Set ClassName -> Hierarchy -> Item -> (Maybe Fact, [Fact])
 keyFun es scope hry = \case
@@ -243,13 +232,13 @@ keyFun es scope hry = \case
         ) . to (makeClassExist cls) )
         `toListOf` cls
       , if cls ^. classAccessFlags . contains CEnum
-        then cls ^.. classAbsFieldNames . to FieldExist
+        then cls ^.. classAbsFieldIds . to FieldExist
         else []
       , [ MethodExist mname
         | m <- cls ^. classMethods
-        , let mname = (mkAbsMethodName (cls^.className) (m^.name))
+        , let mname = mkAbsMethodId cls m
         , m' <- declarations hry mname
-        , not (scope ^. contains (m' ^.inClassName))
+        , not (scope ^. contains (m' ^.className))
         ]
         -- If the class is an innerclass it needs to reference that
       , [ IsInnerClass (cls ^.className) (cls ^.className) ]
@@ -258,7 +247,7 @@ keyFun es scope hry = \case
       -- reasons:
       --   - It is used to preload values to embeded
       --     methods.
-      , [ FieldExist (mkAbsFieldName (cls^.className) (f^.name))
+      , [ FieldExist (mkAbsFieldId cls f)
         | f <- cls ^. classFields
         , f ^. fieldAccessFlags . contains FSynthetic
         ]
@@ -266,7 +255,7 @@ keyFun es scope hry = \case
     )
 
   IField (cls, field) ->
-    ( Just (FieldExist $ mkAbsFieldName (cls^.className) (field^.name) )
+    ( Just (FieldExist $ mkAbsFieldId cls field )
     , flip toListOf field . fold $
       [ classNames . to ClassExist
       , fieldAccessFlags . folding
@@ -294,10 +283,10 @@ keyFun es scope hry = \case
     ( Just (HasInterface (cls^.className) (ct^.classTypeName))
     , concat
       [ ct ^..classNames.to (makeClassExist cls)
-      , [ MethodExist (mkAbsMethodName (cls^.className) m)
+      , [ MethodExist (mkAbsMethodId (cls^.className) m)
         | edgeSelectInterfacesToMethods es
-        , m <- cls^..classMethods.folded.name
-        , abstractDeclaration hry (mkAbsMethodName (ct^.classTypeName) m)
+        , m <- cls^..classMethods.folded.methodId
+        , abstractDeclaration hry (mkAbsMethodId (ct^.classTypeName) m)
         ]
       ]
     )
@@ -307,10 +296,10 @@ keyFun es scope hry = \case
     , concat
       [ toListOf (classConstructors.to CodeIsUntuched) cls
       , ct ^..classNames.to (makeClassExist cls)
-      , [ MethodExist (mkAbsMethodName (cls^.className) m)
+      , [ MethodExist (mkAbsMethodId (cls^.className) m)
         | edgeSelectInterfacesToMethods es
-        , m <- cls^..classMethods.folded.name
-        , abstractDeclaration hry (mkAbsMethodName (ct^.classTypeName) m)
+        , m <- cls^..classMethods.folded.methodId
+        , abstractDeclaration hry (mkAbsMethodId (ct^.classTypeName) m)
         ]
       ]
     )
@@ -328,7 +317,7 @@ keyFun es scope hry = \case
 
 
       -- If a method is abstact find it's definitions.
-      , [ MethodExist (mkAbsMethodName cn (m ^. name))
+      , [ MethodExist (mkAbsMethodId cn m)
         | edgeSelectMethodsToMethods es
         , m ^. methodAccessFlags . contains MAbstract
         , cn <- HS.toList $ definitions hry mname
@@ -337,7 +326,7 @@ keyFun es scope hry = \case
       ]
     )
     where
-      mname = mkAbsMethodName (c^.className) (m ^. name)
+      mname = mkAbsMethodId (c^.className) (m ^. methodId)
 
       methodClassNames =
         methodDescriptor . classNames
@@ -345,7 +334,7 @@ keyFun es scope hry = \case
         <> methodSignature . _Just . classNames
 
   ICode ((cls, m), code) ->
-    ( Just (CodeIsUntuched (mkAbsMethodName (cls^.className) $ m^.methodName))
+    ( Just (CodeIsUntuched (mkAbsMethodId cls m))
     , codeDependencies cls m code
     )
 
@@ -374,10 +363,10 @@ keyFun es scope hry = \case
     processingCode :: Class -> Method -> Code -> [Fact]
     processingCode cls m code =
       case typeCheck hry
-           (mkAbsMethodName (cls^.className) (m^.methodName))
+           (mkAbsMethodId cls m)
            (m^.methodAccessFlags.contains MStatic) code of
         Left (i, x) -> error
-          (show (mkAbsMethodName (cls^.className) (m^.methodName))
+          (show (mkAbsMethodId cls m)
             ++ " "
             ++ show (code^?codeByteCode.ix i)
             ++ " "
@@ -391,11 +380,11 @@ keyFun es scope hry = \case
         (tcs^?!tcStack.ix 0 `requireSubtype` tcs^?!tcStack.ix 2._VTObject._JTArray)
       B.Get fa fid ->
         [ FieldExist fid ]
-        ++ concat [ tcs^?!tcStack.ix 0 `requireSubtype` fid ^.inClassName | fa == B.FldField ]
+        ++ concat [ tcs^?!tcStack.ix 0 `requireSubtype` fid ^.className | fa == B.FldField ]
       B.Put fa fid ->
         [ FieldExist fid ]
         ++ ( tcs^?!tcStack.ix 0 `requireSubtype` fid ^. fieldType )
-        ++ concat [ tcs^?!tcStack.ix 1 `requireSubtype` fid ^.inClassName | fa == B.FldField ]
+        ++ concat [ tcs^?!tcStack.ix 1 `requireSubtype` fid ^.className | fa == B.FldField ]
       B.Invoke a ->
         case a of
           B.InvkSpecial (B.AbsVariableMethodId _ m') ->
@@ -408,14 +397,14 @@ keyFun es scope hry = \case
             findMethod False m'
           B.InvkDynamic (B.InvokeDynamic _ m') ->
             concat $ zipWith requireSubtype (tcs^.tcStack)
-            (reverse . map asTypeInfo $ (review _Binary m' :: MethodName)^.methodArgumentTypes)
+            (reverse . map asTypeInfo $ m'^.methodArgumentTypes)
         where
-          findMethod :: Bool -> AbsMethodName -> [Fact]
+          findMethod :: Bool -> InRefType MethodId -> [Fact]
           findMethod isStatic m' =
-            [ MethodExist m'' | m'' <- maybeToList $ declaration hry m']
+            [ MethodExist m'' | m'' <- maybeToList $ declaration hry (AbsMethodId $ m'^.asInClass)]
             ++ (concat $ zipWith requireSubtype
               (tcs^.tcStack)
-              (reverse $ [ asTypeInfo (m'^.inClassName) | not isStatic]
+              (reverse $ [ asTypeInfo (m'^.asInClass.className) | not isStatic]
                ++ map asTypeInfo (m'^.methodArgumentTypes))
                )
 
@@ -450,7 +439,7 @@ keyFun es scope hry = \case
                   Implement -> HasInterface cn1 cn2
               | (cn1, cn2, edge) <-
                 fromMaybe (error $ "Type error: " ++ show s ++ " !<: " ++ show t )
-                $ subclassPath hry (review _Binary s) (review _Binary t)
+                $ subclassPath hry s t
               ]
             _ -> error "Type error"
           B.JTArray s -> \case
@@ -525,16 +514,6 @@ itemR f' = \case
           Just (ICode (_, c')) -> m & methodCode ?~ c'
           _ -> stub m
         _ -> pure m
-
-
- -- where
- --   processByteCode :: B.ByteCodeOpr B.High -> State [B.VerificationTypeInfo B.High] [Fact]
- --   processByteCode = \case
- --     B.Put _ a -> undefined
-
- --     B.Invoke a -> case a of
- --       B.InvkSpecial _ ->
- --         undefined
 
 payload ::
   Functor f =>
