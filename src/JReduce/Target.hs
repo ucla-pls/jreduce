@@ -1,63 +1,85 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE FlexibleInstances        #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE TupleSections     #-}
 
 module JReduce.Target
-  ( Target 
+  ( Target
   , Content (..)
   , _ClassFile
   , _Jar
   , _MetaData
 
   , targetProblem
+  , targetClasses
+  , fetchHierachy
   , displayTarget
+  , describeProblemTemplate
   )
 where
 
 -- lens
-import           Control.Lens
+import          Control.Lens
 
--- -- deepseq
--- import           Control.DeepSeq
+-- containers
+import qualified Data.IntSet                as IS
 
-
+-- unorderd-containers
+import qualified Data.HashMap.Strict        as HM
+import qualified Data.HashSet               as HS
 
 -- cassava
-import           Data.Csv as C
+import           Data.Csv                   as C
 
 -- zip-archive
 import           Codec.Archive.Zip
 
 -- bytestring
-import qualified Data.ByteString.Lazy                  as BL
+import qualified Data.ByteString.Lazy       as BL
 
 -- dirtree
 import           System.DirTree
 import           System.DirTree.Zip
 
+-- filepath
+import System.FilePath
+
+-- text
+import qualified Data.Text as Text
+import Data.Text.Lazy.Builder as Builder
+import qualified Data.Text.Lazy.Encoding as LazyText
+
 -- nfdata
-import Control.DeepSeq
+import           Control.DeepSeq
 
 -- base
 import           Control.Exception
-import           GHC.Generics (Generic)
-import           Data.Maybe
+import           Control.Monad
 import           Control.Monad.IO.Class
+import qualified Data.List                  as List
+import           Data.Maybe
+import           Data.Coerce
+import           Data.Bifunctor
+import           Data.Monoid
+import           GHC.Generics               (Generic)
 
 -- reduce
-import           Control.Reduce.Problem
 import           Control.Reduce.Metric
-import           Control.Reduce.Util.Logger
+import           Control.Reduce.Problem
+import           Control.Reduce.Graph
 import           Control.Reduce.Reduction
+import           Control.Reduce.Util.Logger as L
 
 -- jvhms
 import           Jvmhs
 
 -- jreduce
-import JReduce.Config
+import           JReduce.Config
 
 -- | The content of a file is either a Class, a Jar, or some MetaData.
 data Content
@@ -74,8 +96,8 @@ instance NFData Content
 type Target = DirTree Content
 
 data TargetMetric = TargetMetric
-  { _targetMetricClasses  :: !Int
-  , _targetMetricJars        :: !Int
+  { _targetMetricClasses    :: !Int
+  , _targetMetricJars       :: !Int
   , _targetMetricOtherFiles :: !Int
   }
 
@@ -104,12 +126,80 @@ contentR f = \case
   Jar c -> fmap Jar <$> deepDirForestR f c
   a -> pure $ Just a
 
-
 targetProblem :: MonadIOReader env m
   => Problem a (DirTree BL.ByteString) -> m (Problem a Target)
 targetProblem p1 = do
     p2 <- liftIO $ refineProblemA (fmap (Just . undeepenTarget,) . deepenTarget) p1
     return $ meassure targetMetric p2
+
+fetchHierachy :: MonadIOReader Config m => [Class] -> m Hierarchy
+fetchHierachy targets = L.phase "Calculating the hierachy" $ do
+  r <- preloadClasses
+
+  hry <- fmap (snd . fst) . flip runClassPoolT
+    (HM.fromList [ (c^.className, c) | c <- targets])
+    $ do
+    L.phase "Loading classes in class path" .  void
+      $ loadClassesFromReader (ReaderOptions False r)
+    getHierarchy
+
+  L.debug $ "Hierachy calculated, processed #"
+    <> L.display (HM.size $ hry ^. hryStubs)
+    <> " classes."
+
+  return hry
+
+
+describeProblemTemplate ::
+  (MonadIOReader Config m)
+  => PartialReduction i i
+  -> m (i -> (k, [k]))
+  -> (k -> Builder)
+  -> Prism' i Target
+  -> FilePath
+  -> Problem a Target
+  -> m (Problem a [IS.IntSet])
+describeProblemTemplate itemR genKeyFun displayK _ITarget wf p = do
+  let
+    p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
+
+  keyFun <- L.phase "Initializing key function" $ genKeyFun
+
+  L.phase "Precalculating the Reduction" $ do
+    core <- view cfgCore
+    L.info . L.displayf "Requiring %d core items." $ List.length core
+
+    ((grph, coreSet, cls), p3) <- toGraphReductionDeepM
+      ( \i ->
+          let (k, items) = keyFun i
+              txt = serializeWith displayK k
+          in L.logtime L.DEBUG ("Processing " <> displayK k) $
+            pure ( txt
+                 , txt `HS.member` core
+                 , map (serializeWith displayK) items
+                 )
+      ) itemR p2
+
+    L.info . L.displayf "Found Core: %d" $ IS.size coreSet
+
+    L.info . L.displayf "Found Number of Closures: %d" $ List.length cls
+
+    L.phase "Outputing graph: " $ do
+      liftIO . BL.writeFile (wf </> "graph.csv")
+        . writeCSV
+        $ ( coerce . first (const ("" :: Text.Text))
+           $ grph :: Control.Reduce.Graph.Graph Text.Text GraphField
+          )
+
+
+    return p3
+
+targetClasses :: Target -> [Class]
+targetClasses = toListOf (folded.go)
+  where
+    go :: Getting (Endo [Class]) Content Class
+    go = _ClassFile <> _Jar.folded.go
+
 
 
 instance Metric TargetMetric where
@@ -176,3 +266,16 @@ displayTarget = go "" where
         MetaData _ -> putStrLn "[data]"
         Jar t -> putStrLn "[jar]" >> go (prefix ++ "> ") (directory t)
         ClassFile cls -> print (cls ^. className)
+
+
+newtype GraphField = GraphField ([Int], Text.Text)
+
+instance ToField GraphField where
+  toField (GraphField (i, a)) =
+    BL.toStrict $
+      LazyText.encodeUtf8
+      ( Builder.toLazyText (
+          "|" <> fromString (List.intercalate "|". map show . reverse $ i)
+          <> " " <> Builder.fromText a
+          )
+      )

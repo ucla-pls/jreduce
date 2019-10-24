@@ -59,7 +59,7 @@ import JReduce.Config
 import qualified JReduce.OverAll
 import JReduce.OverAll (EdgeSelection (..))
 import qualified JReduce.OverClasses
-import qualified JReduce.OverStubs
+-- import qualified JReduce.OverStubs
 
 main :: IO ()
 main = do
@@ -104,9 +104,10 @@ run strat = do
     p2 <- targetProblem $ p1
 
     p3 <- p2 & case strat of
-      OverAll selection -> JReduce.OverAll.describeProblem wf selection
-      OverClasses -> pure . JReduce.OverClasses.describeProblem
-      OverStubs -> pure . JReduce.OverStubs.describeProblem
+      OverAll selection ->
+        JReduce.OverAll.describeProblem selection wf
+      OverClasses ->
+        JReduce.OverClasses.describeProblem wf
 
     (failure, result) <- runReductionProblem (wf </> "reduction")
       (genericBinaryReduction (IS.size . IS.unions))
@@ -139,7 +140,6 @@ run strat = do
 data Strategy
   = OverClasses
   | OverAll EdgeSelection
-  | OverStubs
   deriving (Ord, Eq, Show)
 
 strategyParser :: Parser Strategy
@@ -159,7 +159,6 @@ strategyParser =
     strategyReader = maybeReader $ \s ->
       case Text.split (=='+') . Text.toLower . Text.pack $ s of
         "classes":[] -> Just OverClasses
-        "stub":[] -> Just OverStubs
         "deep":rest -> Just $ OverAll (foldMap toEdgeSelection rest)
         _ -> Nothing
 
