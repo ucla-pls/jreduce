@@ -46,13 +46,20 @@ import qualified Data.ByteString.Lazy       as BL
 import           System.DirTree
 import           System.DirTree.Zip
 
+-- vector
+import qualified Data.Vector as V
+
 -- filepath
 import System.FilePath
+
+-- directory
+import System.Directory
 
 -- text
 import qualified Data.Text as Text
 import Data.Text.Lazy.Builder as Builder
 import qualified Data.Text.Lazy.Encoding as LazyText
+import qualified Data.Text.Lazy.IO as LazyText
 
 -- nfdata
 import           Control.DeepSeq
@@ -66,6 +73,7 @@ import           Data.Maybe
 import           Data.Coerce
 import           Data.Bifunctor
 import           Data.Monoid
+import           Text.Printf
 import           GHC.Generics               (Generic)
 
 -- reduce
@@ -173,16 +181,35 @@ describeProblemTemplate itemR genKeyFun displayK _ITarget wf p = do
       ( \i ->
           let (k, items) = keyFun i
               txt = serializeWith displayK k
-          in L.logtime L.DEBUG ("Processing " <> displayK k) $
+              isCore = txt `HS.member` core
+          in L.logtime L.DEBUG ("Processing " <> displayK k <> (if isCore then " CORE" else ""))  $
             pure ( txt
-                 , txt `HS.member` core
+                 , isCore
                  , map (serializeWith displayK) items
                  )
       ) itemR p2
 
-    L.info . L.displayf "Found Core: %d" $ IS.size coreSet
+    L.info . L.displayf "Found Core: %d"
+      $ IS.size coreSet
 
-    L.info . L.displayf "Found Number of Closures: %d" $ List.length cls
+    liftIO $ do
+      LazyText.writeFile (wf </> "core.txt")
+        . Builder.toLazyText
+        $ foldMap
+          (\x -> (displayGraphField . GraphField $ nodeLabels grph V.! x) <> "\n")
+          (IS.toList coreSet)
+
+    L.info . L.displayf "Found Number of Closures: %d"
+      $ List.length cls
+
+    liftIO $ do
+      createDirectory (wf </> "closures")
+      iforM_ cls $ \i c -> do
+        LazyText.writeFile (wf </> "closures" </> printf "%05d.txt" i)
+          . Builder.toLazyText
+          $ foldMap
+            (\x -> (displayGraphField . GraphField $ nodeLabels grph V.! x) <> "\n")
+            (IS.toList c)
 
     L.phase "Outputing graph: " $ do
       liftIO . BL.writeFile (wf </> "graph.csv")
@@ -199,8 +226,6 @@ targetClasses = toListOf (folded.go)
   where
     go :: Getting (Endo [Class]) Content Class
     go = _ClassFile <> _Jar.folded.go
-
-
 
 instance Metric TargetMetric where
   order = Const ["jars", "classes", "other-files"]
@@ -270,12 +295,14 @@ displayTarget = go "" where
 
 newtype GraphField = GraphField ([Int], Text.Text)
 
+displayGraphField :: GraphField -> Builder
+displayGraphField (GraphField (i, a)) =
+  "|" <> fromString (List.intercalate "|". map show . reverse $ i)
+  <> " " <> Builder.fromText a
+
 instance ToField GraphField where
-  toField (GraphField (i, a)) =
-    BL.toStrict $
-      LazyText.encodeUtf8
-      ( Builder.toLazyText (
-          "|" <> fromString (List.intercalate "|". map show . reverse $ i)
-          <> " " <> Builder.fromText a
-          )
-      )
+  toField gf =
+    BL.toStrict
+    . LazyText.encodeUtf8
+    . Builder.toLazyText
+    $ displayGraphField gf

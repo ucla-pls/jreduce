@@ -1,10 +1,10 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.31.2.
+-- This file has been generated from package.yaml by hpack version 0.33.0.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: e308027e680b0949243f9d8e7d8b54146efe2b723ed52857ce9c90f70803c7cb
+-- hash: cba260b30bb47461a8a909eb2ded01f4b5271ce627bc9580595b0b8f143f1e10
 
 name:           jreduce
 version:        0.0.1
@@ -27,8 +27,8 @@ library
   exposed-modules:
       JReduce
       JReduce.Config
-      JReduce.OverAll
       JReduce.OverClasses
+      JReduce.OverDeep
       JReduce.OverStubs
       JReduce.Target
   other-modules:
@@ -42,6 +42,7 @@ library
     , cassava
     , containers
     , deepseq
+    , directory
     , dirtree
     , filepath
     , jvm-binary
@@ -74,6 +75,7 @@ executable jreduce
     , cassava
     , containers
     , deepseq
+    , directory
     , dirtree
     , filepath
     , jreduce

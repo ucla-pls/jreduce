@@ -23,6 +23,7 @@ dependencies:
   - lens
   - lens-action
   - filepath
+  - directory
   - unliftio
   - zip-archive
   - bytestring
