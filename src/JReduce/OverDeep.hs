@@ -304,7 +304,7 @@ keyFun es scope hry = \case
             findMethod False m'
           B.InvkVirtual m' ->
             findMethod False m'
-          B.InvkStatic  (B.AbsVariableMethodId _ m') ->
+          B.InvkStatic (B.AbsVariableMethodId _ m') ->
             findMethod True m'
           B.InvkInterface _ (B.AbsInterfaceMethodId m') ->
             findMethod False m'
@@ -314,10 +314,6 @@ keyFun es scope hry = \case
 
       B.Throw ->
         ( tcs^?!tcStack.ix 0 `requireSubtype` ("java/lang/Throwable" :: ClassName))
-      -- B.InstanceOf trg ->
-      --   ( trg `requireSubtype` tcs^?!tcStack.ix 0)
-      -- B.CheckCast trg ->
-      --   ( trg `requireSubtype` tcs^?!tcStack.ix 0)
 
       _ -> []
 
@@ -334,12 +330,17 @@ keyFun es scope hry = \case
         
         findMethod :: Bool -> InRefType MethodId -> [Fact]
         findMethod isStatic m' =
-          [ MethodExist m'' | m'' <- maybeToList $ declaration hry (AbsMethodId $ m'^.asInClass)]
-          ++ (concat $ zipWith requireSubtype
-            (tcs^.tcStack)
-            (reverse $ [ asTypeInfo (m'^.asInClass.className) | not isStatic]
-              ++ map asTypeInfo (m'^.methodArgumentTypes))
-              )
+          concat $
+          [ [ MethodExist m'' ]
+            ++ concat
+            [ tcs^?!tcStack.ix (m''^.methodArgumentTypes.to length)
+              `requireSubtype` (m''^.className)
+            | not isStatic ]
+          | m'' <- maybeToList $ declaration hry (AbsMethodId $ m'^.asInClass)
+          ]
+          ++ (zipWith requireSubtype (tcs^.tcStack)
+              (reverse $ map asTypeInfo (m'^.methodArgumentTypes))
+             )
 
     infixl 5 `requireSubtype`
     requireSubtype ::
