@@ -30,6 +30,10 @@ import           Control.Reduce.Util.Logger            as L
 import           Control.Reduce.Util.OptParse
 import           Control.Reduce.Command
 
+-- text
+import qualified Data.Text    as Text
+import qualified Data.Text.IO as Text
+
 -- unordered-containers
 import qualified Data.HashSet                          as HashSet
 
@@ -39,7 +43,7 @@ import           Jvmhs
 
 data Config = Config
   { _cfgLogger           :: !L.LoggerConfig
-  , _cfgCore             :: !(HashSet.HashSet ClassName)
+  , _cfgCore             :: !(HashSet.HashSet Text.Text)
   , _cfgClassPath        :: ![ FilePath ]
   , _cfgUseStdlib        :: !Bool
   , _cfgJreFolder        :: !(Maybe FilePath)
@@ -105,7 +109,7 @@ configParser = do
   _cfgLogger <- parseLoggerConfig
 
   ioCore <-
-    fmap readClassNames . many . strOption
+    fmap readLines . many . strOption
     $ short 'c'
     <> long "core"
     <> metavar "CORE"
@@ -166,7 +170,7 @@ configParser = do
     return $ Config {..}
 
   where
-    readClassNames classnames' =
-      fmap (HashSet.fromList . map strCls . concat) . forM classnames' $ \case
-        '@':filename -> lines <$> readFile filename
-        cn           -> return [cn]
+    readLines ls =
+      fmap (HashSet.fromList . concat) . forM ls $ \case
+        '@':filename -> Text.lines <$> Text.readFile filename
+        cn           -> return [Text.pack cn]

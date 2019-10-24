@@ -24,37 +24,20 @@ import qualified Data.IntSet as IS
 import qualified Data.Set as S
 
 -- unordered-containers
-import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as HS
 
 -- text
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy.Builder as Builder
-import qualified Data.Text.Lazy.Encoding as LazyText
 
 -- base
 import Data.Maybe
 import qualified Data.List as List
-import Data.Monoid
 import Data.Foldable
-import Data.String
-import Control.Monad
-import Control.Monad.IO.Class
-
--- filepath
-import System.FilePath
-
--- cassava
-import qualified Data.Csv as C
-
--- bytestring
-import qualified Data.ByteString.Lazy.Char8 as BL
 
 -- reduce-util
 import Control.Reduce.Reduction
 import Control.Reduce.Problem
-import Control.Reduce.Graph
-import qualified Control.Reduce.Util.Logger as L
 
 -- vector
 import qualified Data.Vector as V
@@ -85,45 +68,6 @@ data Item
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
 
-displayItem :: Item -> Builder.Builder
-displayItem = \case
-  IContent (Jar _) -> "jar"
-  IContent (ClassFile c) ->
-    Builder.fromText (c^.className.fullyQualifiedName)
-  IContent (MetaData _) ->
-    "metadata"
-  ICode ((cls, m), _) ->
-    displayAbsMethodId cls m <> "!code"
-  ITarget _ -> "base"
-  IInnerClass (_, ic) ->
-    displayClassName (ic^.innerClass)
-    <> "!isinner"
-  ISuperClass (cls, ic) ->
-    displayClassName (cls^.className)
-    <> "<S]" <> displayClassName (ic^.classTypeName)
-  IImplements (cls, ic) ->
-    displayClassName (cls^.className)
-    <> "<I]" <> displayClassName (ic^.classTypeName)
-  IField (c, field) ->
-    toBuilder $ mkAbsFieldId c field
-  IMethod (c, method) ->
-    displayAbsMethodId c method
-
-  where
-    displayAbsMethodId cls m =
-      toBuilder $ mkAbsMethodId cls m
-
-    displayClassName cn = Builder.fromText (cn ^. fullyQualifiedName)
-
-instance C.ToField ([Int], Item) where
-  toField (i, x) =
-    BL.toStrict $
-      LazyText.encodeUtf8
-      ( Builder.toLazyText (
-          "|" <> fromString (List.intercalate "|". map show . reverse $ i)
-          <> " " <> displayItem x
-          )
-      )
 
 makePrisms ''Item
 
@@ -135,23 +79,52 @@ data Fact
   | FieldExist AbsFieldId
   | MethodExist AbsMethodId
   | IsInnerClass ClassName ClassName
+  | Meta
   deriving (Eq, Ord)
 
-instance C.ToField Fact where
-  toField = \case
-    ClassExist _ -> "class"
-    CodeIsUntuched _ -> "unstubbed"
-    HasSuperClass _ _ -> "super"
-    HasInterface _ _ -> "interface"
-    FieldExist _ -> "field"
-    IsInnerClass _ _ -> "isinnerclass"
-    MethodExist _ -> "method"
+displayFact :: Fact -> Builder.Builder
+displayFact = \case
+  ClassExist cn -> toBuilder cn
+  CodeIsUntuched md ->
+    toBuilder md <> "!code"
+  HasSuperClass cn1 cn2 ->
+    toBuilder cn1 <> "<S]" <> toBuilder cn2
+  HasInterface cn1 cn2 ->
+    toBuilder cn1 <> "<I]" <> toBuilder cn2
+  FieldExist fd ->
+    toBuilder fd
+  MethodExist md ->
+    toBuilder md
+  IsInnerClass _ cn2 ->
+    toBuilder cn2 <> "!isinner"
+  Meta -> "meta"
+  -- IContent (Jar _) -> "jar"
+  -- IContent (ClassFile c) ->
+  --   Builder.fromText (c^.className.fullyQualifiedName)
+  -- IContent (MetaData _) ->
+  --   "metadata"
+  -- ICode ((cls, m), _) ->
+  --   displayAbsMethodId cls m <> "!code"
+  -- ITarget _ -> "base"
+  -- IInnerClass (_, ic) ->
+  --   displayClassName (ic^.innerClass)
+  --   <> "!isinner"
+  -- ISuperClass (cls, ic) ->
+  --   displayClassName (cls^.className)
+  --   <> "<S]" <> displayClassName (ic^.classTypeName)
+  -- IImplements (cls, ic) ->
+  --   displayClassName (cls^.className)
+  --   <> "<I]" <> displayClassName (ic^.classTypeName)
+  -- IField (c, field) ->
+  --   toBuilder $ mkAbsFieldId c field
+  -- IMethod (c, method) ->
+  --   displayAbsMethodId c method
 
-targetClasses :: Target -> [Class]
-targetClasses = toListOf (folded.go)
-  where
-    go :: Getting (Endo [Class]) Content Class
-    go = _ClassFile <> _Jar.folded.go
+  -- where
+  --   displayAbsMethodId cls m =
+  --     toBuilder $ mkAbsMethodId cls m
+
+  --   displayClassName cn = Builder.fromText (cn ^. fullyQualifiedName)
 
 
 data EdgeSelection = EdgeSelection
@@ -171,45 +144,19 @@ instance Monoid EdgeSelection where
 
 describeProblem ::
   MonadIOReader Config m
-  => FilePath
-  -> EdgeSelection
+  => EdgeSelection
+  -> FilePath
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
-describeProblem wf es p = do
-  let targets = targetClasses $ _problemInitial p
-  let scope = S.fromList . map (view className) $ targets
+describeProblem es wf p = do
+  describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
 
-  hry <- L.phase "Calculating the hierachy" $ do
-    r <- preloadClasses
-
-    hry <- fmap (snd . fst) . flip runClassPoolT
-      (HM.fromList [ (c^.className, c) | c <- targets])
-      $ do
-      L.phase "Loading classes in class path" .  void 
-        $ loadClassesFromReader (ReaderOptions False r)
-      getHierarchy
-
-    L.debug $ "Hierachy calculated, processed #"
-      <> L.display (HM.size $ hry ^. hryStubs)
-      <> " classes."
-
-    return hry
-
-  let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
-
-  L.phase "Precalculating the Reduction" $ do
-    ((grph, cls), p3) <- toGraphReductionDeepM
-      ( \i -> L.logtime L.DEBUG ("Processing " <> displayItem i) $ do
-          let (mf, fs) = keyFun es scope hry i
-          pure (mf, fs)
-      ) itemR p2
-
-    L.phase "Outputing graph: " $ do
-      liftIO . BL.writeFile (wf </> "graph.csv") . writeCSV $ grph
-
-    L.info (L.displayf "Found Number of Closures: %d" $ List.length cls)
-
-    return p3
+  where
+    genKeyFun = do
+      let targets = targetClasses $ _problemInitial p
+      let scope = S.fromList ( map (view className) targets)
+      hry <- fetchHierachy targets
+      pure $ keyFun es scope hry
 
 classConstructors :: Fold Class AbsMethodId
 classConstructors =
@@ -219,10 +166,10 @@ classInitializers :: Fold Class AbsMethodId
 classInitializers =
   classAbsMethodIds . filtered (elemOf methodName "<clinit>")
 
-keyFun :: EdgeSelection -> S.Set ClassName -> Hierarchy -> Item -> (Maybe Fact, [Fact])
+keyFun :: EdgeSelection -> S.Set ClassName -> Hierarchy -> Item -> (Fact, [Fact])
 keyFun es scope hry = \case
   IContent (ClassFile cls) ->
-    ( Just (ClassExist $ cls ^.className)
+    ( ClassExist $ cls ^.className
     , concat
       [ (( classBootstrapMethods . traverse . classNames
          <> classTypeParameters . traverse . classNames
@@ -253,7 +200,7 @@ keyFun es scope hry = \case
     )
 
   IField (cls, field) ->
-    ( Just (FieldExist $ mkAbsFieldId cls field )
+    ( FieldExist $ mkAbsFieldId cls field
     , flip toListOf field . fold $
       [ classNames . to ClassExist
       , fieldAccessFlags . folding
@@ -272,13 +219,13 @@ keyFun es scope hry = \case
 
 
   IInnerClass (cls, ic) ->
-    ( Just (IsInnerClass (cls^.className) $ ic ^. innerClass)
+    ( IsInnerClass (cls^.className) $ ic ^. innerClass
     , toListOf (classNames . to ClassExist) ic
     )
 
   -- You can remove an implements statement if you can remove the class
   IImplements (cls, ct) ->
-    ( Just (HasInterface (cls^.className) (ct^.classTypeName))
+    ( HasInterface (cls^.className) (ct^.classTypeName)
     , concat
       [ ct ^..classNames.to (makeClassExist cls)
       , [ MethodExist (mkAbsMethodId (cls^.className) m)
@@ -290,7 +237,7 @@ keyFun es scope hry = \case
     )
 
   ISuperClass (cls, ct) ->
-    ( Just (HasSuperClass (cls^.className) (ct^.classTypeName))
+    ( HasSuperClass (cls^.className) (ct^.classTypeName)
     , concat
       [ toListOf (classConstructors.to CodeIsUntuched) cls
       , ct ^..classNames.to (makeClassExist cls)
@@ -303,7 +250,7 @@ keyFun es scope hry = \case
     )
 
   IMethod (c, m) ->
-    ( Just . MethodExist $ mname
+    ( MethodExist mname
     , concat
       [ map (makeClassExist c) $ toListOf methodClassNames m
       -- This rule is added to handle cases where the interface is generic.
@@ -332,12 +279,12 @@ keyFun es scope hry = \case
         <> methodSignature . _Just . classNames
 
   ICode ((cls, m), code) ->
-    ( Just (CodeIsUntuched (mkAbsMethodId cls m))
+    ( CodeIsUntuched (mkAbsMethodId cls m)
     , codeDependencies cls m code
     )
 
-  ITarget _ -> (Nothing, [])
-  IContent _ -> (Nothing, [])
+  ITarget _ -> (Meta, [])
+  IContent _ -> (Meta, [])
 
 
   where
@@ -378,11 +325,17 @@ keyFun es scope hry = \case
         (tcs^?!tcStack.ix 0 `requireSubtype` tcs^?!tcStack.ix 2._TRef._Single._JTArray)
       B.Get fa fid ->
         [ FieldExist fid ]
-        ++ concat [ tcs^?!tcStack.ix 0 `requireSubtype` fid ^.className | fa == B.FldField ]
+        ++ concat
+          [ tcs^?!tcStack.ix 0 `requireSubtype` fid ^.className
+          | fa == B.FldField
+          ]
       B.Put fa fid ->
         [ FieldExist fid ]
         ++ ( tcs^?!tcStack.ix 0 `requireSubtype` fid ^. fieldType )
-        ++ concat [ tcs^?!tcStack.ix 1 `requireSubtype` fid ^.className | fa == B.FldField ]
+        ++ concat
+          [ tcs^?!tcStack.ix 1 `requireSubtype` fid ^.className
+          | fa == B.FldField
+          ]
       B.Invoke a ->
         case a of
           B.InvkSpecial (B.AbsVariableMethodId _ m') ->

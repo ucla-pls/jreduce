@@ -1,5 +1,8 @@
 -- |
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
 module JReduce.OverClasses where
 
@@ -12,8 +15,8 @@ import Jvmhs
 -- containers
 import qualified Data.IntSet as IS
 
--- base
-import Data.Maybe
+-- text
+import Data.Text.Lazy.Builder
 
 -- reduce-util
 import Control.Reduce.Reduction
@@ -21,25 +24,38 @@ import Control.Reduce.Problem
 
 -- jreduce
 import JReduce.Target
+import JReduce.Config
 
 data Item
   = IContent Content
   | ITarget Target
 
-type Key = ClassName
+data Key
+  = KClass ClassName
+  | KJar
+  | KMeta
+  | KBase
 
 makePrisms ''Item
 
-describeProblem :: Problem a Target -> Problem a [IS.IntSet]
-describeProblem =
-  toGraphReductionDeep keyFun itemR
-  . liftProblem (review _ITarget) (fromJust . preview _ITarget)
+describeProblem ::
+  MonadIOReader Config m
+  => FilePath
+  -> Problem a Target
+  -> m (Problem a [IS.IntSet])
+describeProblem = describeProblemTemplate
+  itemR (pure keyFun) displayKey _ITarget
 
-keyFun :: Item -> (Maybe Key, [Key])
+keyFun :: Item -> (Key, [Key])
 keyFun = \case
   IContent (ClassFile cls) ->
-    ( Just (cls ^.className) , toListOf classNames cls )
-  _ -> (Nothing, [])
+    ( KClass (cls ^.className) , map KClass $ toListOf classNames cls)
+  IContent (Jar _ ) ->
+    ( KJar , [])
+  IContent (MetaData _ ) ->
+    ( KMeta , [])
+  ITarget _ ->
+    ( KBase , [])
 
 itemR :: PartialReduction Item Item
 itemR f = \case
@@ -55,3 +71,11 @@ itemR f = \case
 
     targetR :: PartialReduction Target Item
     targetR = deepDirTreeR . reduceAs _IContent
+
+
+displayKey :: Key -> Builder
+displayKey = \case
+  KJar -> "jar"
+  KClass cn -> toBuilder cn
+  KMeta -> "meta"
+  KBase -> "base"
