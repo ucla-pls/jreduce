@@ -96,34 +96,6 @@ displayFact = \case
   IsInnerClass _ cn2 ->
     toBuilder cn2 <> "!isinner"
   Meta -> "meta"
-  -- IContent (Jar _) -> "jar"
-  -- IContent (ClassFile c) ->
-  --   Builder.fromText (c^.className.fullyQualifiedName)
-  -- IContent (MetaData _) ->
-  --   "metadata"
-  -- ICode ((cls, m), _) ->
-  --   displayAbsMethodId cls m <> "!code"
-  -- ITarget _ -> "base"
-  -- IInnerClass (_, ic) ->
-  --   displayClassName (ic^.innerClass)
-  --   <> "!isinner"
-  -- ISuperClass (cls, ic) ->
-  --   displayClassName (cls^.className)
-  --   <> "<S]" <> displayClassName (ic^.classTypeName)
-  -- IImplements (cls, ic) ->
-  --   displayClassName (cls^.className)
-  --   <> "<I]" <> displayClassName (ic^.classTypeName)
-  -- IField (c, field) ->
-  --   toBuilder $ mkAbsFieldId c field
-  -- IMethod (c, method) ->
-  --   displayAbsMethodId c method
-
-  -- where
-  --   displayAbsMethodId cls m =
-  --     toBuilder $ mkAbsMethodId cls m
-
-  --   displayClassName cn = Builder.fromText (cn ^. fullyQualifiedName)
-
 
 data EdgeSelection = EdgeSelection
   { edgeSelectInterfacesToMethods :: Bool
@@ -322,18 +294,10 @@ keyFun es scope hry = \case
       B.ArrayStore _ ->
         (tcs^?!tcStack.ix 0 `requireSubtype` tcs^?!tcStack.ix 2._TRef._Single._JTArray)
       B.Get fa fid ->
-        [ FieldExist fid ]
-        ++ concat
-          [ tcs^?!tcStack.ix 0 `requireSubtype` fid ^.className
-          | fa == B.FldField
-          ]
+        findField fa (tcs^?!tcStack.ix 0) fid
       B.Put fa fid ->
-        [ FieldExist fid ]
-        ++ ( tcs^?!tcStack.ix 0 `requireSubtype` fid ^. fieldType )
-        ++ concat
-          [ tcs^?!tcStack.ix 1 `requireSubtype` fid ^.className
-          | fa == B.FldField
-          ]
+        ( tcs^?!tcStack.ix 0 `requireSubtype` fid ^. fieldType )
+        ++ findField fa (tcs^?!tcStack.ix 1) fid
       B.Invoke a ->
         case a of
           B.InvkSpecial (B.AbsVariableMethodId _ m') ->
@@ -347,15 +311,6 @@ keyFun es scope hry = \case
           B.InvkDynamic (B.InvokeDynamic _ m') ->
             concat $ zipWith requireSubtype (tcs^.tcStack)
             (reverse . map asTypeInfo $ m'^.methodArgumentTypes)
-        where
-          findMethod :: Bool -> InRefType MethodId -> [Fact]
-          findMethod isStatic m' =
-            [ MethodExist m'' | m'' <- maybeToList $ declaration hry (AbsMethodId $ m'^.asInClass)]
-            ++ (concat $ zipWith requireSubtype
-              (tcs^.tcStack)
-              (reverse $ [ asTypeInfo (m'^.asInClass.className) | not isStatic]
-               ++ map asTypeInfo (m'^.methodArgumentTypes))
-               )
 
       B.Throw ->
         ( tcs^?!tcStack.ix 0 `requireSubtype` ("java/lang/Throwable" :: ClassName))
@@ -365,6 +320,26 @@ keyFun es scope hry = \case
       --   ( trg `requireSubtype` tcs^?!tcStack.ix 0)
 
       _ -> []
+
+      where
+        findField :: B.FieldAccess -> TypeInfo -> AbsFieldId -> [Fact]
+        findField fa ti fid =
+          case fieldLocation hry fid of
+            Just fid' ->
+              [ FieldExist fid' ] ++
+              concat [ ti `requireSubtype` fid' ^. className | fa == B.FldField]
+            Nothing ->
+              concat [ ti `requireSubtype` fid ^. className  | fa == B.FldField]
+
+        
+        findMethod :: Bool -> InRefType MethodId -> [Fact]
+        findMethod isStatic m' =
+          [ MethodExist m'' | m'' <- maybeToList $ declaration hry (AbsMethodId $ m'^.asInClass)]
+          ++ (concat $ zipWith requireSubtype
+            (tcs^.tcStack)
+            (reverse $ [ asTypeInfo (m'^.asInClass.className) | not isStatic]
+              ++ map asTypeInfo (m'^.methodArgumentTypes))
+              )
 
     infixl 5 `requireSubtype`
     requireSubtype ::
