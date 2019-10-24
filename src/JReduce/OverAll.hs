@@ -57,7 +57,6 @@ import qualified Language.JVM.Constant as B
 import JReduce.Target
 import JReduce.Config
 
-
 data Item
   = IContent Content
   | ICode ((Class, Method), Code)

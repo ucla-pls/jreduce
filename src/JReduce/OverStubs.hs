@@ -5,38 +5,38 @@
 {-# LANGUAGE ApplicativeDo #-}
 module JReduce.OverStubs where
 
--- lens
-import Control.Lens
+-- -- lens
+-- import Control.Lens
 
--- jvmhs
-import Jvmhs
+-- -- jvmhs
+-- import Jvmhs
 
--- containers
-import qualified Data.IntSet as IS
+-- -- containers
+-- import qualified Data.IntSet as IS
 
--- base
-import Data.Maybe
+-- -- base
+-- import Data.Maybe
 
--- reduce-util
-import Control.Reduce.Reduction
-import Control.Reduce.Problem
+-- -- reduce-util
+-- import Control.Reduce.Reduction
+-- import Control.Reduce.Problem
 
--- jvmhs
-import Jvmhs.Transform.Stub
+-- -- jvmhs
+-- import Jvmhs.Transform.Stub
 
--- jreduce
-import JReduce.Target
+-- -- jreduce
+-- import JReduce.Target
 
-data Item
-  = IContent Content
-  | ICode Code
-  | ITarget Target
+-- data Item
+--   = IContent Content
+--   | ICode Code
+--   | ITarget Target
 
-makePrisms ''Item
+-- makePrisms ''Item
 
-data Key
-  = KClassName ClassName
-  deriving (Eq, Ord)
+-- data Key
+--   = KClassName ClassName
+--   deriving (Eq, Ord)
 
 -- describeProblem :: Problem a Target -> Problem a [IS.IntSet]
 -- describeProblem =
