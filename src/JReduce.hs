@@ -56,8 +56,8 @@ import           GHC.IO.Encoding (setLocaleEncoding, utf8)
 -- jreduce
 import JReduce.Target
 import JReduce.Config
-import qualified JReduce.OverAll
-import JReduce.OverAll (EdgeSelection (..))
+import qualified JReduce.OverDeep
+import JReduce.OverDeep (EdgeSelection (..))
 import qualified JReduce.OverClasses
 -- import qualified JReduce.OverStubs
 
@@ -104,8 +104,8 @@ run strat = do
     p2 <- targetProblem $ p1
 
     p3 <- p2 & case strat of
-      OverAll selection ->
-        JReduce.OverAll.describeProblem selection wf
+      OverDeep selection ->
+        JReduce.OverDeep.describeProblem selection wf
       OverClasses ->
         JReduce.OverClasses.describeProblem wf
 
@@ -139,7 +139,7 @@ run strat = do
 
 data Strategy
   = OverClasses
-  | OverAll EdgeSelection
+  | OverDeep EdgeSelection
   deriving (Ord, Eq, Show)
 
 strategyParser :: Parser Strategy
@@ -159,7 +159,7 @@ strategyParser =
     strategyReader = maybeReader $ \s ->
       case Text.split (=='+') . Text.toLower . Text.pack $ s of
         "classes":[] -> Just OverClasses
-        "deep":rest -> Just $ OverAll (foldMap toEdgeSelection rest)
+        "deep":rest -> Just $ OverDeep (foldMap toEdgeSelection rest)
         _ -> Nothing
 
       where

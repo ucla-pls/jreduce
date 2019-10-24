@@ -11,7 +11,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ApplicativeDo #-}
-module JReduce.OverAll where
+module JReduce.OverDeep where
 
 -- lens
 import Control.Lens
@@ -66,7 +66,6 @@ data Item
   | IField (Class, Field)
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
-
 
 makePrisms ''Item
 
