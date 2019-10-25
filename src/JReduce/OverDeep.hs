@@ -320,6 +320,12 @@ keyFun es scope hry = \case
       B.Throw ->
         ( tcs^?!tcStack.ix 0 `requireSubtype` ("java/lang/Throwable" :: ClassName))
 
+      B.CheckCast fa ->
+        -- We just want to pick up on the intersection, if no subtype exist
+        -- it's not a problem.
+        ( tcs^?!tcStack.ix 0 `requireSubtype` fa)
+        ++ ( fa `requireSubtype` tcs^?!tcStack.ix 0)
+
       _ -> []
 
       where
@@ -372,23 +378,23 @@ keyFun es scope hry = \case
                   Extend -> HasSuperClass cn1 cn2
                   Implement -> HasInterface cn1 cn2
               | (cn1, cn2, edge) <-
-                fromMaybe (error $ "Type error: " ++ show s ++ " !<: " ++ show t )
-                $ subclassPath hry s t
+                -- fromMaybe (error $ "Type error: " ++ show s ++ " !<: " ++ show t )
+                fromMaybe [] $ subclassPath hry s t
               ]
-            _ -> error "Type error"
+            _ -> [] -- error "Type error"
           B.JTArray s -> \case
             B.JTArray t ->
               case (s, t) of
                 (JTRef s', JTRef t') -> s' `requireSubReftype` t'
                 _
                   | s == t -> []
-                  | otherwise -> error "Type error"
+                  | otherwise -> [] -- error "Type error"
             B.JTClass t
               | List.elem t
                 [ "java/lang/Object"
                 , "java/lang/Cloneable"
                 , "java.io.Serializable"] -> []
-              | otherwise -> error "Type error"
+              | otherwise -> [] -- error "Type error"
 
 itemR :: PartialReduction Item Item
 itemR f' = \case
