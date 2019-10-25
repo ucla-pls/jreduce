@@ -292,10 +292,13 @@ keyFun es scope hry = \case
             ++ " "
             ++ show x)
         Right vc ->
-          concat (V.zipWith (\ts c -> processOpCode ts (B.opcode c)) vc (code ^. codeByteCode))
+          concat (V.zipWith
+                  (\ts c ->
+                      processOpCode (m^.methodReturnType) ts (B.opcode c)
+                  ) vc (code ^. codeByteCode))
 
-    processOpCode :: TypeCheckState -> B.ByteCodeOpr B.High -> [Fact]
-    processOpCode tcs = \case
+    processOpCode :: Maybe JType -> TypeCheckState -> B.ByteCodeOpr B.High -> [Fact]
+    processOpCode rt tcs = \case
       B.ArrayStore _ ->
         (tcs^?!tcStack.ix 0 `requireSubtype` tcs^?!tcStack.ix 2._TRef._Single._JTArray)
       B.Get fa fid ->
@@ -326,6 +329,10 @@ keyFun es scope hry = \case
         ( tcs^?!tcStack.ix 0 `requireSubtype` fa)
         ++ ( fa `requireSubtype` tcs^?!tcStack.ix 0)
 
+      B.Return (Just B.LRef) ->
+        case rt of
+          Just t -> ( tcs^?!tcStack.ix 0 `requireSubtype` t)
+          Nothing -> []
       _ -> []
 
       where
