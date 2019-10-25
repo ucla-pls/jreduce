@@ -231,6 +231,12 @@ keyFun es scope hry = \case
         ]
 
 
+      , concat
+        [ [ makeClassExist c a ]
+          ++ ( a `requireSubtype` ("java/lang/Throwable" :: ClassName))
+        | a <- m^. methodExceptions
+        ]
+
       -- If a method is abstact find it's definitions.
       , [ MethodExist (mkAbsMethodId cn m)
         | edgeSelectMethodsToMethods es
@@ -245,7 +251,6 @@ keyFun es scope hry = \case
 
       methodClassNames =
         methodDescriptor . classNames
-        <> methodExceptions . traverse
         <> methodSignature . _Just . classNames
 
   ICode ((cls, m), code) ->
