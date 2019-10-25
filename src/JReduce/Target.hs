@@ -186,11 +186,12 @@ describeProblemTemplate itemR genKeyFun displayK _ITarget wf p = do
           let (k, items) = keyFun i
               txt = serializeWith displayK k
               isCore = txt `HS.member` core
-          in L.logtime L.DEBUG ("Processing " <> displayK k <> (if isCore then " CORE" else ""))  $
-            pure ( txt
-                 , isCore
-                 , map (serializeWith displayK) items
-                 )
+          in do
+            a <- L.logtime L.DEBUG ("Processing " <> displayK k <> (if isCore then " CORE" else ""))  $
+              let a = map (serializeWith displayK) items
+              in deepseq a (pure a)
+            L.debug $ L.displayf "Found %d edges." (length a)
+            return (txt, isCore, a)
       ) itemR p2
 
     L.info . L.displayf "Found Core: %d"
