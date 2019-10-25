@@ -144,11 +144,15 @@ fetchHierachy :: MonadIOReader Config m => [Class] -> m Hierarchy
 fetchHierachy targets = L.phase "Calculating the hierachy" $ do
   r <- preloadClasses
 
-  hry <- fmap (snd . fst) . flip runClassPoolT
-    (HM.fromList [ (c^.className, c) | c <- targets])
+  -- TODO Fix read order so that classes that override the classpath
+  -- is loaded first.
+  hry <- fmap (snd . fst) . flip runClassPoolT mempty
     $ do
     L.phase "Loading classes in class path" .  void
       $ loadClassesFromReader (ReaderOptions False r)
+
+    forM_ targets putClass
+     
     getHierarchy
 
   L.debug $ "Hierachy calculated, processed #"
