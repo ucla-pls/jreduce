@@ -332,11 +332,11 @@ keyFun es scope hry = \case
             Nothing ->
               concat [ ti `requireSubtype` fid ^. className  | fa == B.FldField]
 
-        
         findMethod :: Bool -> InRefType MethodId -> [Fact]
         findMethod isStatic m' =
           concat $
           [ [ MethodExist m'' ]
+            ++ (m'^.asInClass.className `requireSubtype` m''^.className)
             ++ concat
             [ tcs^?!tcStack.ix (m''^.methodArgumentTypes.to length)
               `requireSubtype` (m''^.className)
