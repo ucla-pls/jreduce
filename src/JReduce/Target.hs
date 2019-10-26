@@ -30,7 +30,6 @@ import          Control.Lens
 import qualified Data.IntSet                as IS
 
 -- unorderd-containers
-import qualified Data.HashMap.Strict        as HM
 import qualified Data.HashSet               as HS
 
 -- cassava
@@ -141,23 +140,26 @@ targetProblem p1 = do
     return $ meassure targetMetric p2
 
 fetchHierachy :: MonadIOReader Config m => [Class] -> m Hierarchy
-fetchHierachy targets = L.phase "Calculating the hierachy" $ do
-  r <- preloadClasses
+fetchHierachy targets = L.phase "Calculating the hierarchy" $ do
 
-  -- TODO Fix read order so that classes that override the classpath
-  -- is loaded first.
-  hry <- fmap (snd . fst) . flip runClassPoolT mempty
-    $ do
-    L.phase "Loading classes in class path" .  void
-      $ loadClassesFromReader (ReaderOptions False r)
+  stubsfile <- view cfgStubsFile
+  stdlib <- L.phase "Load stdlib stubs" . liftIO $ do
+    r <- fromClassPath []
+    case stubsfile of
+      Just fp ->
+        computeStubsWithCache fp r
+      Nothing ->
+        computeStubs r
 
+  stubs <- L.phase "Load project stubs" $
+    fmap fst . flip runClassPoolT mempty $ do
     forM_ targets putClass
-     
-    getHierarchy
+    expandStubs stdlib
 
-  L.debug $ "Hierachy calculated, processed #"
-    <> L.display (HM.size $ hry ^. hryStubs)
-    <> " classes."
+  hry <- L.phase "Compute hierarchy" $
+    hierarchyFromStubsWarn
+    (\a -> L.warn $ "Could not find: " <> toBuilder a)
+    stubs
 
   return hry
 

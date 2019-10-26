@@ -23,9 +23,6 @@ import Jvmhs
 import qualified Data.IntSet as IS
 import qualified Data.Set as S
 
--- unordered-containers
-import qualified Data.HashSet as HS
-
 -- text
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy.Builder as Builder
@@ -149,10 +146,15 @@ keyFun es scope hry = \case
       , if cls ^. classAccessFlags . contains CEnum
         then cls ^.. classAbsFieldIds . to FieldExist
         else []
+
+      -- If a method is an implementation of a method out of scope, then
+      -- edgeSelectMethods will not work. To remain a valid program we
+      -- add edges from the class itself to it.
       , [ MethodExist mname
-        | m <- cls ^. classMethods
+        | edgeSelectMethodsToMethods es
+        , m <- cls ^. classMethods
         , let mname = mkAbsMethodId cls m
-        , m' <- declarations hry mname
+        , (m', True) <- declarations mname hry
         , not (scope ^. contains (m' ^.className))
         ]
         -- If the class is an innerclass it needs to reference that
@@ -200,8 +202,7 @@ keyFun es scope hry = \case
       [ ct ^..classNames.to (makeClassExist cls)
       , [ MethodExist (mkAbsMethodId (cls^.className) m)
         | edgeSelectInterfacesToMethods es
-        , m <- cls^..classMethods.folded.methodId
-        , abstractDeclaration hry (mkAbsMethodId (ct^.classTypeName) m)
+        , m <- cls^..classMethods.folded.filtered methodIsAbstract.methodId
         ]
       ]
     )
@@ -213,8 +214,7 @@ keyFun es scope hry = \case
       , ct ^..classNames.to (makeClassExist cls)
       , [ MethodExist (mkAbsMethodId (cls^.className) m)
         | edgeSelectInterfacesToMethods es
-        , m <- cls^..classMethods.folded.methodId
-        , abstractDeclaration hry (mkAbsMethodId (ct^.classTypeName) m)
+        , m <- cls^..classMethods.folded.filtered methodIsAbstract.methodId
         ]
       ]
     )
@@ -238,11 +238,11 @@ keyFun es scope hry = \case
         ]
 
       -- If a method is abstact find it's definitions.
-      , [ MethodExist (mkAbsMethodId cn m)
+      , [ MethodExist mid
         | edgeSelectMethodsToMethods es
         , m ^. methodAccessFlags . contains MAbstract
-        , cn <- HS.toList $ definitions hry mname
-        , cn /= c ^. className
+        , mid <- definitions mname hry
+        , mid ^. className /= c ^. className
         ]
       ]
     )
@@ -338,7 +338,7 @@ keyFun es scope hry = \case
       where
         findField :: B.FieldAccess -> TypeInfo -> AbsFieldId -> [Fact]
         findField fa ti fid =
-          case fieldLocation hry fid of
+          case fmap fst . uncons $ fieldLocations fid hry of
             Just fid' ->
               [ FieldExist fid' ] ++
               concat [ ti `requireSubtype` fid' ^. className | fa == B.FldField]
@@ -354,7 +354,7 @@ keyFun es scope hry = \case
             [ tcs^?!tcStack.ix (m''^.methodArgumentTypes.to length)
               `requireSubtype` (m''^.className)
             | not isStatic ]
-          | m'' <- maybeToList $ declaration hry (AbsMethodId $ m'^.asInClass)
+          | (m'', _) <- take 1 $ declarations (AbsMethodId $ m'^.asInClass) hry
           ]
           ++ (zipWith requireSubtype (tcs^.tcStack)
               (reverse $ map asTypeInfo (m'^.methodArgumentTypes))
@@ -385,8 +385,8 @@ keyFun es scope hry = \case
                   Extend -> HasSuperClass cn1 cn2
                   Implement -> HasInterface cn1 cn2
               | (cn1, cn2, edge) <-
+                fromMaybe [] . fmap fst . uncons $ subclassPath s t hry
                 -- fromMaybe (error $ "Type error: " ++ show s ++ " !<: " ++ show t )
-                fromMaybe [] $ subclassPath hry s t
               ]
             _ -> [] -- error "Type error"
           B.JTArray s -> \case
@@ -424,7 +424,7 @@ itemR f' = \case
 
     classR :: Reduction Class Item
     classR f c = do
-      (super :: Maybe ClassType) <- case c ^. classSuper of
+      _super <- case c ^. classSuper of
         Just a
           | a ^. classTypeName == "java/lang/Object" ->
             pure $ Just  a
@@ -444,15 +444,15 @@ itemR f' = \case
       innerClasses <-
         (listR . payload c . reduceAs _IInnerClass) f (c ^. classInnerClasses)
 
-      interfaces <-
+      _interfaces <-
         (listR . payload c . reduceAs _IImplements) f (c ^. classInterfaces)
 
       pure $ c
-        & classSuper .~ super
+        & classSuper .~ _super
         & classFields .~ fields
         & classMethods .~ methods
         & classInnerClasses .~ innerClasses
-        & classInterfaces .~ interfaces
+        & classInterfaces .~ _interfaces
 
     methodR :: Class -> Reduction Method Item
     methodR cls f m =
@@ -469,3 +469,7 @@ payload ::
   -> a -> f (Maybe a)
 payload p fn a =
   fmap snd <$> fn (p, a)
+
+methodIsAbstract :: Method -> Bool
+methodIsAbstract =
+  view (methodAccessFlags . contains MAbstract)

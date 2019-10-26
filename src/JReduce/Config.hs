@@ -46,6 +46,7 @@ data Config = Config
   , _cfgCore             :: !(HashSet.HashSet Text.Text)
   , _cfgClassPath        :: ![ FilePath ]
   , _cfgUseStdlib        :: !Bool
+  , _cfgStubsFile        :: !(Maybe FilePath)
   , _cfgJreFolder        :: !(Maybe FilePath)
   , _cfgTarget           :: !FilePath
   , _cfgOutput           :: !(Maybe FilePath)
@@ -131,7 +132,12 @@ configParser = do
   _cfgUseStdlib <-
     switch $ long "stdlib"
     <> hidden
-    <> help "load the standard library?. This will take longer."
+    <> help "load the standard library?. This will take longer, but might be nesseary."
+
+  _cfgStubsFile <-
+    optional . strOption $ long "stubs"
+    <> hidden
+    <> help "save the stdlib to this stubsfile. Choose between .json and .bin formats."
 
   _cfgJreFolder <-
     optional . strOption $ long "jre"
