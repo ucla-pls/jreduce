@@ -199,32 +199,34 @@ describeProblemTemplate itemR genKeyFun displayK _ITarget wf p = do
     L.info . L.displayf "Found Core: %d"
       $ IS.size coreSet
 
-    liftIO $ do
-      LazyText.writeFile (wf </> "core.txt")
-        . Builder.toLazyText
-        $ foldMap
-          (\x -> (displayGraphField . GraphField $ nodeLabels grph V.! x) <> "\n")
-          (IS.toList coreSet)
 
     L.info . L.displayf "Found Number of Closures: %d"
       $ List.length cls
 
-    liftIO $ do
-      createDirectory (wf </> "closures")
-      iforM_ cls $ \i c -> do
-        LazyText.writeFile (wf </> "closures" </> printf "%05d.txt" i)
+    dump <- view cfgDoDump
+
+    when dump $ do
+      L.phase "Outputing core: " . liftIO $ do
+        LazyText.writeFile (wf </> "core.txt")
           . Builder.toLazyText
           $ foldMap
             (\x -> (displayGraphField . GraphField $ nodeLabels grph V.! x) <> "\n")
-            (IS.toList c)
+            (IS.toList coreSet)
+      L.phase "Outputing closures: " . liftIO $ do
+        createDirectory (wf </> "closures")
+        iforM_ cls $ \i c -> do
+          LazyText.writeFile (wf </> "closures" </> printf "%05d.txt" i)
+            . Builder.toLazyText
+            $ foldMap
+              (\x -> (displayGraphField . GraphField $ nodeLabels grph V.! x) <> "\n")
+              (IS.toList c)
 
-    L.phase "Outputing graph: " $ do
-      liftIO . BL.writeFile (wf </> "graph.csv")
-        . writeCSV
-        $ ( coerce . first (const ("" :: Text.Text))
-           $ grph :: Control.Reduce.Graph.Graph Text.Text GraphField
-          )
-
+      L.phase "Outputing graph: " . liftIO $ do
+        BL.writeFile (wf </> "graph.csv")
+          . writeCSV
+          $ ( coerce . first (const ("" :: Text.Text))
+            $ grph :: Control.Reduce.Graph.Graph Text.Text GraphField
+            )
 
     return p3
 

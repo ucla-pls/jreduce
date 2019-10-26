@@ -52,6 +52,7 @@ data Config = Config
   , _cfgOutput           :: !(Maybe FilePath)
   , _cfgReducerName      :: !ReducerName
   , _cfgWorkFolder       :: !WorkFolder
+  , _cfgDoDump           :: !Bool
   , _cfgPredicateOptions :: !PredicateOptions
   , _cfgReductionOptions :: !ReductionOptions
   , _cfgCmdTemplate      :: !CmdTemplate
@@ -144,6 +145,11 @@ configParser = do
     <> hidden
     <> metavar "JRE"
     <> help "the location of the stdlib."
+
+  _cfgDoDump <-
+    switch $ long "dump"
+    <> hidden
+    <> help "dump closures and graph to workfolder."
 
   _cfgOutput <-
     parseOutputFile
