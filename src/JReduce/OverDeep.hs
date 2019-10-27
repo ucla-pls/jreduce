@@ -39,6 +39,9 @@ import Control.Reduce.Problem
 -- vector
 import qualified Data.Vector as V
 
+-- unorderd-containers
+import qualified Data.HashMap.Strict as HM
+
 -- jvmhs
 import Jvmhs.Data.Code
 import Jvmhs.Data.Signature
@@ -195,14 +198,13 @@ keyFun es scope hry = \case
     , toListOf (classNames . to ClassExist) ic
     )
 
-  -- You can remove an implements statement if you can remove the class
   IImplements (cls, ct) ->
     ( HasInterface (cls^.className) (ct^.classTypeName)
     , concat
       [ ct ^..classNames.to (makeClassExist cls)
       , [ MethodExist (mkAbsMethodId (cls^.className) m)
         | edgeSelectInterfacesToMethods es
-        , m <- cls^..classMethods.folded.filtered methodIsAbstract.methodId
+        , (m, (_, True)) <- HM.toList $ declaredMethods (ct^.classTypeName) hry
         ]
       ]
     )
@@ -214,7 +216,7 @@ keyFun es scope hry = \case
       , ct ^..classNames.to (makeClassExist cls)
       , [ MethodExist (mkAbsMethodId (cls^.className) m)
         | edgeSelectInterfacesToMethods es
-        , m <- cls^..classMethods.folded.filtered methodIsAbstract.methodId
+        , (m, (_, True)) <- HM.toList $ declaredMethods (ct^.classTypeName) hry
         ]
       ]
     )
