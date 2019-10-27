@@ -203,15 +203,18 @@ describeProblemTemplate itemR genKeyFun displayK _ITarget wf p = do
     L.info . L.displayf "Found Number of Closures: %d"
       $ List.length cls
 
-    dump <- view cfgDoDump
 
-    when dump $ do
+
+    whenM (view cfgDumpCore) $ do
       L.phase "Outputing core: " . liftIO $ do
         LazyText.writeFile (wf </> "core.txt")
           . Builder.toLazyText
           $ foldMap
             (\x -> (displayGraphField . GraphField $ nodeLabels grph V.! x) <> "\n")
             (IS.toList coreSet)
+
+
+    whenM (view cfgDumpClosures) $ do
       L.phase "Outputing closures: " . liftIO $ do
         createDirectory (wf </> "closures")
         iforM_ cls $ \i c -> do
@@ -221,6 +224,7 @@ describeProblemTemplate itemR genKeyFun displayK _ITarget wf p = do
               (\x -> (displayGraphField . GraphField $ nodeLabels grph V.! x) <> "\n")
               (IS.toList c)
 
+    whenM (view cfgDumpGraph) $ do
       L.phase "Outputing graph: " . liftIO $ do
         BL.writeFile (wf </> "graph.csv")
           . writeCSV
@@ -315,3 +319,9 @@ instance ToField GraphField where
     . LazyText.encodeUtf8
     . Builder.toLazyText
     $ displayGraphField gf
+
+whenM :: Monad m => (m Bool) -> m () -> m ()
+whenM mb m = mb >>= \b -> when b m
+
+-- unlessM :: Monad m => (m Bool) -> m () -> m ()
+-- unlessM mb m = mb >>= \b -> when b m

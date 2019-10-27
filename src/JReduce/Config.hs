@@ -40,6 +40,13 @@ import qualified Data.HashSet                          as HashSet
 -- jvmhs
 import           Jvmhs
 
+data DumpConfig = DumpConfig
+  { _cfgDumpGraph        :: !Bool
+  , _cfgDumpClosures     :: !Bool
+  , _cfgDumpCore         :: !Bool
+  } deriving (Show)
+
+makeClassy ''DumpConfig
 
 data Config = Config
   { _cfgLogger           :: !L.LoggerConfig
@@ -52,13 +59,16 @@ data Config = Config
   , _cfgOutput           :: !(Maybe FilePath)
   , _cfgReducerName      :: !ReducerName
   , _cfgWorkFolder       :: !WorkFolder
-  , _cfgDoDump           :: !Bool
+  , _cfgDump             :: !DumpConfig
   , _cfgPredicateOptions :: !PredicateOptions
   , _cfgReductionOptions :: !ReductionOptions
   , _cfgCmdTemplate      :: !CmdTemplate
   } deriving (Show)
 
 makeClassy ''Config
+
+instance HasDumpConfig Config where
+  dumpConfig = cfgDump
 
 instance HasLogger Config where
   loggerL = cfgLogger
@@ -69,8 +79,8 @@ instance HasPredicateOptions Config where
 instance HasReductionOptions Config where
   reductionOptions = cfgReductionOptions
 
-type MonadIOReader env m = (MonadIO m, MonadReader env m)
-
+type MonadIOReader env m =
+  (MonadIO m, MonadReader env m)
 
 preloadClasses ::
   (HasConfig env, HasLogger env, MonadIOReader env m)
@@ -100,6 +110,29 @@ createClassLoader = do
           liftIO $ fromJreFolder cp jre
     else
       return $ ClassLoader [] [] cp
+
+parseDumpConfig :: Parser DumpConfig
+parseDumpConfig = do
+  _dump <- switch
+    $ long "dump" <> hidden
+    <> help "dump all to the workfolder."
+  _dumpGraph <- switch
+    $ long "dump-graph" <> hidden
+    <> help "dump graph to the workfolder."
+  _dumpClosures <- switch
+    $ long "dump-closures" <> hidden
+    <> help "dump graph to the workfolder."
+
+  _dumpCore <- switch
+    $ long "dump-core" <> hidden
+    <> help "dump core to the workfolder."
+
+  return $ DumpConfig
+    { _cfgDumpGraph    = _dump || _dumpGraph
+    , _cfgDumpClosures = _dump || _dumpClosures
+    , _cfgDumpCore     = _dump || _dumpCore
+    }
+     
 
 configParser :: Parser (IO Config)
 configParser = do
@@ -146,10 +179,8 @@ configParser = do
     <> metavar "JRE"
     <> help "the location of the stdlib."
 
-  _cfgDoDump <-
-    switch $ long "dump"
-    <> hidden
-    <> help "dump closures and graph to workfolder."
+  _cfgDump <-
+    parseDumpConfig
 
   _cfgOutput <-
     parseOutputFile
