@@ -93,8 +93,8 @@ displayFact = \case
     toBuilder fd
   MethodExist md ->
     toBuilder md
-  IsInnerClass _ cn2 ->
-    toBuilder cn2 <> "!isinner"
+  IsInnerClass cn1 cn2 ->
+    toBuilder cn1 <> "[innerOf]" <> toBuilder cn2
   Meta -> "meta"
 
 data EdgeSelection = EdgeSelection
