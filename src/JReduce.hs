@@ -120,7 +120,8 @@ run strat = do
       Nothing ->
         L.info $ "Reduction successfull."
 
-    _ <- checkSolution (wf </> "final") p3 result
+    local (redKeepFolders .~ True) $
+      void $ checkSolution (wf </> "final") p3 result
 
 
     return (fromJust $ _problemExtractBase p3 result)
