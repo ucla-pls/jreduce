@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor       #-}
+{-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FlexibleInstances       #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE ConstraintKinds #-}
@@ -52,7 +53,6 @@ data Config = Config
   { _cfgLogger           :: !L.LoggerConfig
   , _cfgCore             :: !(HashSet.HashSet Text.Text)
   , _cfgClassPath        :: ![ FilePath ]
-  , _cfgUseStdlib        :: !Bool
   , _cfgStubsFile        :: !(Maybe FilePath)
   , _cfgJreFolder        :: !(Maybe FilePath)
   , _cfgTarget           :: !FilePath
@@ -82,46 +82,60 @@ instance HasReductionOptions Config where
 type MonadIOReader env m =
   (MonadIO m, MonadReader env m)
 
-preloadClasses ::
-  (HasConfig env, HasLogger env, MonadIOReader env m)
-  => m ClassPreloader
-preloadClasses = L.phase "Preloading Classes" $ do
-  cls <- createClassLoader
-  (classreader, numclasses) <- liftIO $ do
-    classreader <- preload cls
-    numclasses <- length <$> classes classreader
-    return (classreader, numclasses)
-  L.debug $ "Found" <-> display numclasses <-> "classes."
-  return classreader
+-- preloadClasses ::
+--   (HasConfig env, HasLogger env, MonadIOReader env m)
+--   => m ClassPreloader
+-- preloadClasses = L.phase "Preloading Classes" $ do
+--   cls <- createClassLoader
+--   (classreader, numclasses) <- liftIO $ do
+--     classreader <- preload cls
+--     numclasses <- length <$> classes classreader
+--     return (classreader, numclasses)
+--   L.debug $ "Found" <-> display numclasses <-> "classes."
+--   return classreader
 
--- | Create a class loader from the config
-createClassLoader ::
-  (HasConfig env, MonadIOReader env m)
-  => m ClassLoader
-createClassLoader = do
-  cfg <- ask
-  let cp = cfg ^. cfgTarget : cfg ^. cfgClassPath
-  if cfg ^. cfgUseStdlib
-    then
-      case cfg ^. cfgJreFolder of
-        Nothing ->
-          liftIO $ fromClassPath cp
-        Just jre ->
-          liftIO $ fromJreFolder cp jre
-    else
-      return $ ClassLoader [] [] cp
+fetchHierachy :: MonadIOReader Config m => [Class] -> m Hierarchy
+fetchHierachy targets = L.phase "Calculating the hierarchy" $ do
+  stubsfile <- view cfgStubsFile
+  stdlib <- L.phase "Load stdlib stubs" $ do
+    r <- view cfgJreFolder
+      >>= liftIO . maybe (fromClassPath []) (fromJreFolder [])
+
+    liftIO $ case stubsfile of
+      Just fp ->
+        computeStubsWithCache fp r
+      Nothing ->
+        computeStubs r
+
+  stubs <- L.phase "Load project stubs" $ do
+    (stubs, _) <- flip runClassPoolT mempty $ do
+      cp <- view cfgClassPath
+      errs <- loadClassesFromReader (ReaderOptions False (ClassLoader [] [] cp))
+      forM errs $ L.warn . L.display
+      forM_ targets putClass
+      expandStubs stdlib
+    return stubs
+
+  hry <- L.phase "Compute hierarchy" $
+    hierarchyFromStubsWarn
+    (\a -> L.warn $ "Could not find: " <> toBuilder a)
+    stubs
+
+  return hry
 
 parseDumpConfig :: Parser DumpConfig
 parseDumpConfig = do
   _dump <- switch
     $ long "dump" <> hidden
     <> help "dump all to the workfolder."
+
   _dumpGraph <- switch
     $ long "dump-graph" <> hidden
     <> help "dump graph to the workfolder."
+
   _dumpClosures <- switch
     $ long "dump-closures" <> hidden
-    <> help "dump graph to the workfolder."
+    <> help "dump closures to the workfolder."
 
   _dumpCore <- switch
     $ long "dump-core" <> hidden
@@ -163,15 +177,13 @@ configParser = do
                ++ " reducing a library using a test-suite"
                )
 
-  _cfgUseStdlib <-
-    switch $ long "stdlib"
-    <> hidden
-    <> help "load the standard library?. This will take longer, but might be nesseary."
-
   _cfgStubsFile <-
-    optional . strOption $ long "stubs"
+    optional . strOption $ long "stdlib"
     <> hidden
-    <> help "save the stdlib to this stubsfile. Choose between .json and .bin formats."
+    <> help
+    ( "load and save the stdlib to this stubsfile."
+      <> " Choose between .json and .bin formats."
+    )
 
   _cfgJreFolder <-
     optional . strOption $ long "jre"
