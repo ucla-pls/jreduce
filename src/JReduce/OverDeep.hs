@@ -66,6 +66,7 @@ data Item
   | IField (Class, Field)
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
+  | IMethodThrows ((Class, Method), ThrowsSignature)
 
 makePrisms ''Item
 
@@ -77,6 +78,7 @@ data Fact
   | FieldExist AbsFieldId
   | MethodExist AbsMethodId
   | IsInnerClass ClassName ClassName
+  | MethodThrows AbsMethodId ClassName
   | Meta
   deriving (Eq, Ord)
 
@@ -95,12 +97,15 @@ displayFact = \case
     toBuilder md
   IsInnerClass cn1 cn2 ->
     toBuilder cn1 <> "[innerOf]" <> toBuilder cn2
+  MethodThrows m cn ->
+    toBuilder m <> "[throws]" <> toBuilder cn
   Meta -> "meta"
 
 data EdgeSelection = EdgeSelection
   { edgeSelectInterfacesToMethods :: Bool
   , edgeSelectMethodsToMethods    :: Bool
   , edgeSelectMethodsToCode       :: Bool
+  , edgeSelectCodeToThrows        :: Bool
   } deriving (Show, Eq, Ord)
 
 instance Semigroup EdgeSelection where
@@ -108,9 +113,10 @@ instance Semigroup EdgeSelection where
     (any edgeSelectInterfacesToMethods [a, b])
     (any edgeSelectMethodsToMethods [a, b])
     (any edgeSelectMethodsToCode [a, b])
+    (any edgeSelectCodeToThrows [a, b])
 
 instance Monoid EdgeSelection where
-  mempty = EdgeSelection False False False
+  mempty = EdgeSelection False False False True
 
 describeProblem ::
   MonadIOReader Config m
@@ -221,6 +227,17 @@ keyFun es scope hry = \case
       ]
     )
 
+  IMethodThrows ((c, m), t) ->
+    ( MethodThrows
+      (mkAbsMethodId c m)
+      (fromMaybe "java/lang/Throwable" (t^?_ThrowsClass.classTypeName))
+    , concat
+      [ [ makeClassExist c a ]
+        ++ ( a `requireSubtype` ("java/lang/Throwable" :: ClassName))
+      | a <- m^..methodExceptions.folded._ThrowsClass.classTypeName
+      ]
+    )
+
   IMethod (c, m) ->
     ( MethodExist mname
     , concat
@@ -230,13 +247,6 @@ keyFun es scope hry = \case
       , [ CodeIsUntuched mname
         | m^.methodAccessFlags.contains MSynthetic
           || edgeSelectMethodsToCode es
-        ]
-
-
-      , concat
-        [ [ makeClassExist c a ]
-          ++ ( a `requireSubtype` ("java/lang/Throwable" :: ClassName))
-        | a <- m^. methodExceptions
         ]
 
       -- If a method is abstact find it's definitions.
@@ -253,16 +263,22 @@ keyFun es scope hry = \case
 
       methodClassNames =
         methodDescriptor . classNames
-        <> methodSignature . _Just . classNames
+        <> methodReturn . _Just . classNames
+        <> methodArguments . folded . classNames
 
   ICode ((cls, m), code) ->
     ( CodeIsUntuched (mkAbsMethodId cls m)
     , codeDependencies cls m code
+      <>
+      [ MethodThrows
+        (mkAbsMethodId cls m)
+        (fromMaybe "java/lang/Throwable" (t^?_ThrowsClass.classTypeName))
+      | t <- m ^. methodExceptions
+      ]
     )
 
   ITarget _ -> (Meta, [])
   IContent _ -> (Meta, [])
-
 
   where
     makeClassExist :: Class -> ClassName -> Fact
@@ -457,12 +473,22 @@ itemR f' = \case
         & classInterfaces .~ _interfaces
 
     methodR :: Class -> Reduction Method Item
-    methodR cls f m =
-      case m ^. methodCode of
+    methodR cls f m = do
+      t <- case m ^. methodCode of
         Just c -> f (ICode ((cls, m), c)) <&> \case
-          Just (ICode (_, c')) -> m & methodCode ?~ c'
-          _ -> stub m
-        _ -> pure m
+          Just (ICode (_, c')) -> Just c'
+          _ -> Nothing
+        _ -> pure Nothing
+
+      _methodThrows <- (listR . payload (cls, m) . reduceAs _IMethodThrows) f (m^.methodExceptions)
+
+      pure $
+        ( case t of
+            Just c -> m & methodCode .~ Just c
+            Nothing -> stub m
+        ) & methodExceptions .~ _methodThrows
+
+
 
 payload ::
   Functor f =>

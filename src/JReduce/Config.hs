@@ -197,13 +197,6 @@ configParser = do
   _cfgOutput <-
     parseOutputFile
 
-  -- _cfgRecursive <-
-  --   switch $
-  --   long "recursive"
-  --   <> short 'r'
-  --   <> hidden
-  --   <> help "remove other files and reduce internal jars."
-
   _cfgWorkFolder <-
     parseWorkFolder "jreduce"
 
