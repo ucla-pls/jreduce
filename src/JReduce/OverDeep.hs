@@ -166,8 +166,8 @@ keyFun es scope hry = \case
         , (m', True) <- declarations mname hry
         , not (scope ^. contains (m' ^.className))
         ]
-        -- If the class is an innerclass it needs to reference that
-      , [ IsInnerClass (cls ^.className) (cls ^.className) ]
+      -- If the class is an innerclass it needs to reference that
+      -- , [ IsInnerClass (cls ^.className) (cls ^.className) ]
 
       -- If a field is synthetic it can exist for multiple
       -- reasons:

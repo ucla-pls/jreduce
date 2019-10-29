@@ -57,6 +57,7 @@ import           GHC.IO.Encoding (setLocaleEncoding, utf8)
 import JReduce.Target
 import JReduce.Config
 import qualified JReduce.OverDeep
+import qualified JReduce.OverLogic
 import JReduce.OverDeep (EdgeSelection (..))
 import qualified JReduce.OverClasses
 -- import qualified JReduce.OverStubs
