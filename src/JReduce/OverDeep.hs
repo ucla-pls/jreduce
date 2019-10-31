@@ -167,7 +167,7 @@ keyFun es scope hry = \case
         , not (scope ^. contains (m' ^.className))
         ]
       -- If the class is an innerclass it needs to reference that
-      -- , [ IsInnerClass (cls ^.className) (cls ^.className) ]
+      , [ IsInnerClass (cls ^.className) (cls ^.className) ]
 
       -- If a field is synthetic it can exist for multiple
       -- reasons:
@@ -403,7 +403,9 @@ keyFun es scope hry = \case
                   Extend -> HasSuperClass cn1 cn2
                   Implement -> HasInterface cn1 cn2
               | (cn1, cn2, edge) <-
-                fromMaybe [] . fmap fst . uncons $ subclassPath s t hry
+                case subclassPaths s t hry of
+                  a : _ -> take 1 $ subclassEdges a
+                  [] -> []
                 -- fromMaybe (error $ "Type error: " ++ show s ++ " !<: " ++ show t )
               ]
             _ -> [] -- error "Type error"
