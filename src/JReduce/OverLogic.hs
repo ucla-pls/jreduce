@@ -41,8 +41,10 @@ import qualified Language.JVM.Attribute.BootstrapMethods as B
 import qualified Language.JVM as B
 import Language.JVM.ByteCode (ByteCodeOpr (..))
 
+-- reduce-util
 import Control.Reduce.Boolean
 import Control.Reduce.Problem
+import Control.Reduce.Util.Logger as L
 
 -- jreduce
 import JReduce.Target
@@ -55,8 +57,8 @@ import JReduce.OverDeep ( Item (..), Fact (..)
 
 data GraphLang a = GVar a | Deps a a
 
-underCompiler :: Term Int -> Maybe [ GraphLang Int ]
-underCompiler = fmap catMaybes . mapM fn . cnfCompiler where
+underCompiler :: Cnf -> Maybe [ GraphLang Int ]
+underCompiler = fmap catMaybes . mapM fn where
   fn (Clause trs fls) = case (IS.toList trs, IS.toList fls) of
       ([] , [] )   -> fail "False"
       ([] , [a])  -> return $ Just (GVar a)
@@ -64,8 +66,8 @@ underCompiler = fmap catMaybes . mapM fn . cnfCompiler where
       ([a], [b]) -> return $ Just (Deps b a)
       _ -> return $ Nothing
 
-overCompiler :: Term Int -> Maybe [ GraphLang Int ]
-overCompiler = mapM fn . cnfCompiler where
+overCompiler :: Cnf -> Maybe [ GraphLang Int ]
+overCompiler = mapM fn where
   fn (Clause trs fls) = case (IS.toList trs, IS.toList fls) of
       ([] , [] ) -> fail "False"
       ([] , a:_) -> return $ GVar a
@@ -90,17 +92,24 @@ describeGraphProblem b wf p = do
       let targets = targetClasses $ _problemInitial p
       let scope = S.fromList ( map (view className) targets)
       hry <- fetchHierachy targets
-      pure $ \i ->
-        let (f, tf) = logic scope hry i
-            (it, res) = decompose (foldMap S.singleton tf)
-            tf2 = fmap (it M.!) tf
-        in
+      pure $ \i -> do
+        let
+          (f, tf) = logic scope hry i
+          (it, res) = decompose (foldMap S.singleton tf)
+          tf' = fmap (it M.!) tf
+
+        L.debug $ L.displayf "Found Expression of size: %d" (V.length res)
+        L.debug $ L.display tf'
+
+        let cnf = cnfCompiler tf'
+       
+        L.debug $ L.displayf "Found Cnf of size: %d" (length cnf)
+
+        pure
           ( f
           , [ (res V.! x, res V.! y)
             | Deps x y <- concat
-              $ if b
-                then overCompiler tf2
-                else underCompiler tf2
+              $ if b then overCompiler cnf else underCompiler cnf
             ]
           )
 
@@ -254,8 +263,9 @@ logic scope hry = \case
           -- element on the stack has to be a subclass of fields class, and
           -- the second element have to be a subtype of the type of the field
           requireField fid
-          /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
-          /\ stack 1 `requireSubtype` fid^.fieldType
+          /\ stack 0 `requireSubtype` fid^.fieldType
+          /\ given (fa /= B.FldStatic)
+            (stack 1 `requireSubtype` fid^.className)
 
         Invoke a ->
           -- For the methods there are three general cases, a regular method call,

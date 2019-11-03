@@ -143,7 +143,7 @@ targetProblem p1 = do
 describeProblemTemplate ::
   (MonadIOReader Config m)
   => PartialReduction i i
-  -> m (i -> (k, [(k, k)]))
+  -> m (i -> m (k, [(k, k)]))
   -> (k -> Builder)
   -> Prism' i Target
   -> FilePath
@@ -160,16 +160,17 @@ describeProblemTemplate itemR genKeyFun displayK _ITarget wf p = do
     L.info . L.displayf "Requiring %d core items." $ List.length core
 
     ((grph, coreSet, cls), p3) <- toGraphReductionDeepM
-      ( \i ->
-          let (k, items) = keyFun i
-              txt = serializeWith displayK k
-              isCore = txt `HS.member` core
-          in do
-            a <- L.logtime L.DEBUG ("Processing " <> displayK k <> (if isCore then " CORE" else ""))  $
-              let a = map (over both $ serializeWith displayK) items
-              in deepseq a (pure a)
-            L.debug $ L.displayf "Found %d edges." (length a)
-            return (txt, isCore, a)
+      ( \i -> do
+          (k, items) <- keyFun i
+          let
+            txt = serializeWith displayK k
+            isCore = txt `HS.member` core
+
+          a <- L.logtime L.DEBUG ("Processing " <> displayK k <> (if isCore then " CORE" else ""))  $
+            let a = map (over both $ serializeWith displayK) items
+            in deepseq a (pure a)
+          L.debug $ L.displayf "Found %d edges." (length a)
+          return (txt, isCore, a)
       ) itemR p2
 
     L.info . L.displayf "Found Core: %d"

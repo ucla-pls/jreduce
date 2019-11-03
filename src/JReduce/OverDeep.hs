@@ -131,9 +131,9 @@ describeProblem es wf p =
       let targets = targetClasses $ _problemInitial p
       let scope = S.fromList ( map (view className) targets)
       hry <- fetchHierachy targets
-      pure $ \i ->
+      pure $ \i -> do
         let (k, ks) = keyFun es scope hry i
-        in (k , map (k,) ks)
+        pure (k , map (k,) ks)
 
 classConstructors :: Fold Class AbsMethodId
 classConstructors =

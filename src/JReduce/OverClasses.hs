@@ -45,7 +45,7 @@ describeProblem ::
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
 describeProblem = describeProblemTemplate
-  itemR (pure $ \i -> let (k,ks) = keyFun i in (k, map (k,) ks))
+  itemR (pure $ \i -> let (k,ks) = keyFun i in pure (k, map (k,) ks))
   displayKey _ITarget
 
 keyFun :: Item -> (Key, [Key])
