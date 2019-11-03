@@ -1,6 +1,7 @@
 -- |
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -44,7 +45,8 @@ describeProblem ::
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
 describeProblem = describeProblemTemplate
-  itemR (pure keyFun) displayKey _ITarget
+  itemR (pure $ \i -> let (k,ks) = keyFun i in (k, map (k,) ks))
+  displayKey _ITarget
 
 keyFun :: Item -> (Key, [Key])
 keyFun = \case

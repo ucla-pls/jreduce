@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -11,17 +12,22 @@
 module JReduce.OverLogic where
 
 -- lens
-import Control.Lens
+import Control.Lens hiding (andOf, orOf)
 
 -- containers
 import qualified Data.Set as S
+import qualified Data.Map.Strict as M
+import qualified Data.IntSet as IS
 
 -- vector
 import qualified Data.Vector as V
 
 -- base
-import Data.Foldable
+import Data.Foldable hiding (and, or)
 import Data.Maybe
+import Data.Monoid
+import Control.Monad.Fail
+import Prelude hiding (fail, not, and, or)
 
 -- jvmhs
 import Jvmhs.Data.Type
@@ -35,64 +41,69 @@ import qualified Language.JVM.Attribute.BootstrapMethods as B
 import qualified Language.JVM as B
 import Language.JVM.ByteCode (ByteCodeOpr (..))
 
+import Control.Reduce.Boolean
+import Control.Reduce.Problem
+
 -- jreduce
 import JReduce.Target
-import JReduce.OverDeep (Item (..), Fact (..), classInitializers, classConstructors)
+import JReduce.Config
+import JReduce.OverDeep ( Item (..), Fact (..)
+                        , classInitializers, classConstructors
+                        , itemR, displayFact
+                        , _ITarget
+                        )
 
+data GraphLang a = GVar a | Deps a a
 
-class Boolean a where
-  type BooleanArg a
-  infixl 5 \/
-  infixl 6 /\
-  infixr 4 ==>
-  (/\), (\/), (==>) :: BooleanArg a -> BooleanArg a -> a
-  notL :: BooleanArg a -> a
-  true :: a
-  false :: a
+underCompiler :: Term Int -> Maybe [ GraphLang Int ]
+underCompiler = fmap catMaybes . mapM fn . cnfCompiler where
+  fn (Clause trs fls) = case (IS.toList trs, IS.toList fls) of
+      ([] , [] )   -> fail "False"
+      ([] , [a])  -> return $ Just (GVar a)
+      ([_], [] )  -> fail "Illigal expression"
+      ([a], [b]) -> return $ Just (Deps a b)
+      _ -> return $ Nothing
 
--- | NNF
-data Term a
-  = And [Term a]
-  | Or  [Term a]
-  | Var Bool a
-  deriving (Show, Eq)
+overCompiler :: Term Int -> Maybe [ GraphLang Int ]
+overCompiler = mapM fn . cnfCompiler where
+  fn (Clause trs fls) = case (IS.toList trs, IS.toList fls) of
+      ([] , [] ) -> fail "False"
+      ([] , a:_) -> return $ GVar a
+      (_:_, [] )  -> fail "Illigal expression"
+      (a:_, b:_) -> return $ Deps a b
 
-instance Semigroup (Term a) where
-  (<>) = (/\)
+decompose :: Ord a => S.Set a -> (M.Map a Int, V.Vector a)
+decompose a =
+  (M.fromAscList . toList $ imap (flip (,)) res, res)
+  where res = V.fromList (toList a)
 
-instance Monoid (Term a) where
-  mempty = And []
+describeGraphProblem ::
+  MonadIOReader Config m
+  => Bool
+  -> FilePath
+  -> Problem a Target
+  -> m (Problem a [IS.IntSet])
+describeGraphProblem b wf p = do
+  describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
+  where
+    genKeyFun = do
+      let targets = targetClasses $ _problemInitial p
+      let scope = S.fromList ( map (view className) targets)
+      hry <- fetchHierachy targets
+      pure $ \i ->
+        let (f, tf) = logic scope hry i
+            (it, res) = decompose (foldMap S.singleton tf)
+            tf2 = fmap (it M.!) tf
+        in
+          ( f
+          , [ (res V.! x, res V.! y)
+            | Deps x y <- concat
+              $ if b
+                then overCompiler tf2
+                else underCompiler tf2
+            ]
+          )
 
-instance Boolean (Term a) where
-  type BooleanArg (Term a) = Term a
-  notL = \case
-    And terms -> Or (map notL terms)
-    Or terms -> And (map notL terms)
-    Var x a -> Var (not x) a
-
-  (==>) a b =
-    notL a \/ b
-
-  a /\ b = Or [ a , b ]
-  a \/ b = And [ a , b ]
-  true = And []
-  false = Or []
-
-
-withLogic :: Fact -> (Term Fact -> [Term Fact]) -> (Fact, Term Fact)
-withLogic f fn = (f, fold (fn (Var True f)))
-
-forall :: (Monoid b, Boolean b, Foldable f) => f a -> (a -> b) -> b
-forall = flip foldMap
-
-forallOf :: (Monoid b, Boolean b) => Fold a c -> a -> (c -> b) -> b
-forallOf f a fn = foldMapOf f fn a
-
-when :: Monoid m => Bool -> m -> m
-when b m = if b then m else mempty
-
-unless :: Monoid m => Bool -> m -> m
-unless b = when (not b)
 
 logic :: S.Set ClassName -> Hierarchy -> Item -> (Fact, Term Fact)
 logic scope hry = \case
@@ -123,7 +134,7 @@ logic scope hry = \case
     [ -- If a field is final it has to be set. This happens either in the
       -- class initializers or in the constructors. This means we cannot stub
       -- these methods.
-      when (FFinal `S.member` flags)
+      given (FFinal `S.member` flags)
         if FStatic `S.member` flags
         then forallOf classInitializers cls \m ->
           f ==> codeIsUntuched m
@@ -133,7 +144,7 @@ logic scope hry = \case
     , -- TODO: Reconsider this?
       -- If any field is synthetic we will require it to not be removed, if the
       -- class exist. This helps with many problems.
-      when (FSynthetic `S.member` flags) do
+      given (FSynthetic `S.member` flags) do
         classExist cls ==> f
     ]
     where flags = field^.fieldAccessFlags
@@ -159,20 +170,20 @@ logic scope hry = \case
       -- require it to be true or one of it's super classes to have implemented
       -- it.
       forall (implementationPaths (cls^.className) hry)
-        \(def, isAbstract, path) -> when (not isAbstract)
+        \(def, isAbstract, path) -> given (not isAbstract)
           $ m /\ unbrokenPath path ==> requireMethod (mkAbsMethodId def method)
       else
       -- If the methods is not abstract, make sure that the method defintion
       -- does exist. A chain from A <: I <: !I. If I does not exit, either
       -- this method have to stay or we have to remove the implements interface.
       forall (superAbstractDeclarationPaths (mkAbsMethodId cls method) hry)
-        \(decl, path) -> unless ((decl ^. className) `S.member` scope) $
+        \(decl, path) -> given (not $ (decl ^. className) `S.member` scope) $
           unbrokenPath path ==> m
 
     , -- TODO: Nessary?
       -- Finally we requier that if a method is synthetic is should be
       -- removed alongside its code
-      when (method^.methodAccessFlags.contains MSynthetic)
+      given (method^.methodAccessFlags.contains MSynthetic)
       $ m ==> codeIsUntuched (mkAbsMethodId cls method)
     ]
 
@@ -197,7 +208,7 @@ logic scope hry = \case
 
     , -- If inner class is ponting to itself, then it required as long at the
       -- class exist.
-      when (cls^.className == ic^.innerClass) $
+      given (cls^.className == ic^.innerClass) $
       classExist cls ==> i
 
       -- NOTE: That all requirements that a class exist also will check if
@@ -229,33 +240,33 @@ logic scope hry = \case
         ArrayStore _ ->
           -- When we store an item in the array, it should be a subtype of the
           -- content of the array.
-          stack 0 `requireSubtype` stack 2 ^?!_TRef._Single._JTArray
+          stack 0 `requireSubtype` isArray (stack 2)
 
         Get fa fid ->
           -- For a get value is valid the field has to exist, and the first
           -- element on the stack has to be a subclass of fields class.
           requireField fid
-          /\ unless (fa == B.FldStatic) (stack 0 `requireSubtype` fid^.className)
+          /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
 
         Put fa fid ->
           -- For a put value is valid the field has to exist, and the first
           -- element on the stack has to be a subclass of fields class, and
           -- the second element have to be a subtype of the type of the field
           requireField fid
-          /\ unless (fa == B.FldStatic) (stack 0 `requireSubtype` fid^.className)
+          /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
           /\ stack 1 `requireSubtype` fid^.fieldType
 
         Invoke a ->
           -- For the methods there are three general cases, a regular method call,
           -- a static methods call (no-object) and a dynamic call (no-class).
           methodRequirements
-          /\ And [ s `requireSubtype` t | (s, t) <- zip (state ^. tcStack) (reverse stackTypes)]
+          /\ and [ s `requireSubtype` t | (s, t) <- zip (state ^. tcStack) (reverse stackTypes)]
           where
             (methodRequirements, stackTypes) =
               case methodInvokeTypes a of
                 Right (isStatic, m) ->
                   ( requireMethod (AbsMethodId $ m^.asInClass)
-                  , unless isStatic [asTypeInfo $ m^.asInClass.className]
+                  , [asTypeInfo $ m^.asInClass.className | not isStatic]
                     <> (map asTypeInfo $ m^.methodArgumentTypes)
                   )
                 Left m -> (true, map asTypeInfo $ m^.methodArgumentTypes)
@@ -293,39 +304,42 @@ logic scope hry = \case
 
       typeCheckStates =
         case typeCheck hry theMethodName (method^.methodAccessFlags.contains MStatic) code of
-        Left (i, x) -> error $ show theMethodName
-          ++ " " ++ show (code^?codeByteCode.ix i)
-          ++ " " ++ show x
-        Right vc -> vc
+          (Just (i, x), _) -> error
+            (show theMethodName
+              ++ " "
+              ++ show (code^?codeByteCode.ix i)
+              ++ " "
+              ++ show x)
+          (Nothing, vc) -> vc
 
-  IContent (Jar _) -> (Meta, And [])
-  IContent (MetaData _) -> (Meta, And [])
-  ITarget _ -> (Meta, And [])
+  IContent (Jar _) -> (Meta, true)
+  IContent (MetaData _) -> (Meta, true)
+  ITarget _ -> (Meta, true)
 
   where
 
-    requireField fid = Or
+    requireField fid = or
       [ fieldExist fid' /\ unbrokenPath path
       | (fid', path) <- fieldLocationPaths fid hry
       ]
 
-    requireMethod mid = Or
+    requireMethod mid = or
       [ methodExist mid' /\ unbrokenPath path
       | (mid', path) <- superDefinitionPaths mid hry
       ]
 
-    infixl 7 `requireSubtype`
+    infixl 6 `requireSubtype`
     requireSubtype ::
       (AsTypeInfo a, AsTypeInfo b)
       => a -> b
       -> Term Fact
-    requireSubtype (asTypeInfo -> TRef as) (asTypeInfo -> TRef bs) = And
+    requireSubtype (asTypeInfo -> TRef as) (asTypeInfo -> TRef bs) = and
       [ a `requireSubRefType` b | a <- toList as, b <- toList bs]
       where
         requireSubRefType a b = case a of
           B.JTClass s -> case b of
             B.JTClass "java/lang/Object" -> true
-            B.JTClass t -> And
+            B.JTClass t -> and
               [ unbrokenPath path
               | path <- subclassPaths s t hry
               ]
@@ -336,10 +350,20 @@ logic scope hry = \case
           _ -> true
     requireSubtype _ _ = true
 
+    -- Return the type of array execpt if it the typeinfo is null in which case
+    -- we return Nothing
+    isArray :: TypeInfo -> TypeInfo
+    isArray ti =
+      fromJust $
+      foldl (\a b -> a >>= meet (asTypeInfo b))
+      (Just TTop)
+      (ti ^.._TRef.folded._JTArray)
+   
+
 
 unbrokenPath :: SubclassPath -> Term Fact
 unbrokenPath path =
-  And [ isSubclass f t e | (f, t, e) <- subclassEdges path]
+  and [ isSubclass f t e | (f, t, e) <- subclassEdges path]
 
 isSubclass :: ClassName -> ClassName -> HEdge -> Term Fact
 isSubclass cn1 cn2 = \case
@@ -347,31 +371,39 @@ isSubclass cn1 cn2 = \case
   Extend -> hasSuperClass cn1 cn2
 
 hasInterface :: ClassName -> ClassName -> Term Fact
-hasInterface cn1 cn2 = Var True (HasInterface cn1 cn2)
+hasInterface cn1 cn2 = TVar (HasInterface cn1 cn2)
 
 hasSuperClass :: ClassName -> ClassName -> Term Fact
-hasSuperClass cn1 cn2 = Var True (HasSuperClass cn1 cn2)
+hasSuperClass cn1 cn2 = TVar (HasSuperClass cn1 cn2)
 
 requireMethodHandle :: B.MethodHandle B.High -> Term Fact
 requireMethodHandle = undefined
 
 requireClassNames :: Inspectable a => a -> Term Fact
-requireClassNames a = a ^. classNames . to classExist
+requireClassNames = andOf (classNames . to classExist)
 
-requireClassNamesOf :: (Inspectable a) => Getting (Term Fact) b a -> b -> Term Fact
-requireClassNamesOf l b = b ^. l . classNames . to classExist
+requireClassNamesOf ::
+  Inspectable a
+  => Getting (Endo (Endo (Term Fact))) s a -> s -> (Term Fact)
+requireClassNamesOf l a =
+  forallOf (l . classNames) a classExist
 
 classExist :: HasClassName a => a -> Term Fact
-classExist cn = Var True (ClassExist (cn^.className))
+classExist cn = TVar (ClassExist (cn^.className))
 
 fieldExist :: AbsFieldId -> Term Fact
 fieldExist f =
-  Var True (FieldExist f)
+  TVar (FieldExist f)
 
 methodExist :: AbsMethodId -> Term Fact
 methodExist f =
-  Var True (MethodExist f)
+  TVar (MethodExist f)
 
 codeIsUntuched :: AbsMethodId -> Term Fact
 codeIsUntuched m =
-  Var True (CodeIsUntuched m)
+  TVar (CodeIsUntuched m)
+
+
+withLogic :: Fact -> (Term Fact -> [Term Fact]) -> (Fact, Term Fact)
+withLogic f fn = (f, and (fn (TVar f)))
+

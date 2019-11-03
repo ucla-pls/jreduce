@@ -143,7 +143,7 @@ targetProblem p1 = do
 describeProblemTemplate ::
   (MonadIOReader Config m)
   => PartialReduction i i
-  -> m (i -> (k, [k]))
+  -> m (i -> (k, [(k, k)]))
   -> (k -> Builder)
   -> Prism' i Target
   -> FilePath
@@ -166,7 +166,7 @@ describeProblemTemplate itemR genKeyFun displayK _ITarget wf p = do
               isCore = txt `HS.member` core
           in do
             a <- L.logtime L.DEBUG ("Processing " <> displayK k <> (if isCore then " CORE" else ""))  $
-              let a = map (serializeWith displayK) items
+              let a = map (over both $ serializeWith displayK) items
               in deepseq a (pure a)
             L.debug $ L.displayf "Found %d edges." (length a)
             return (txt, isCore, a)

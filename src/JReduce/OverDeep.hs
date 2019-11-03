@@ -124,15 +124,16 @@ describeProblem ::
   -> FilePath
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
-describeProblem es wf p = do
+describeProblem es wf p = 
   describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
-
   where
     genKeyFun = do
       let targets = targetClasses $ _problemInitial p
       let scope = S.fromList ( map (view className) targets)
       hry <- fetchHierachy targets
-      pure $ keyFun es scope hry
+      pure $ \i ->
+        let (k, ks) = keyFun es scope hry i
+        in (k , map (k,) ks)
 
 classConstructors :: Fold Class AbsMethodId
 classConstructors =
@@ -303,13 +304,13 @@ keyFun es scope hry = \case
       case typeCheck hry
            (mkAbsMethodId cls m)
            (m^.methodAccessFlags.contains MStatic) code of
-        Left (i, x) -> error
+        (Just (i, x), _) -> error
           (show (mkAbsMethodId cls m)
             ++ " "
             ++ show (code^?codeByteCode.ix i)
             ++ " "
             ++ show x)
-        Right vc ->
+        (Nothing, vc) ->
           concat (V.zipWith
                   (\ts c ->
                       processOpCode (m^.methodReturnType) ts (B.opcode c)
