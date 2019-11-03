@@ -61,7 +61,7 @@ underCompiler = fmap catMaybes . mapM fn . cnfCompiler where
       ([] , [] )   -> fail "False"
       ([] , [a])  -> return $ Just (GVar a)
       ([_], [] )  -> fail "Illigal expression"
-      ([a], [b]) -> return $ Just (Deps a b)
+      ([a], [b]) -> return $ Just (Deps b a)
       _ -> return $ Nothing
 
 overCompiler :: Term Int -> Maybe [ GraphLang Int ]
@@ -70,7 +70,7 @@ overCompiler = mapM fn . cnfCompiler where
       ([] , [] ) -> fail "False"
       ([] , a:_) -> return $ GVar a
       (_:_, [] )  -> fail "Illigal expression"
-      (a:_, b:_) -> return $ Deps a b
+      (a:_, b:_) -> return $ Deps b a
 
 decompose :: Ord a => S.Set a -> (M.Map a Int, V.Vector a)
 decompose a =
