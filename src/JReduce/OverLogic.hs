@@ -176,8 +176,9 @@ logic scope hry = \case
       -- If the methods is not abstract, make sure that the method defintion
       -- does exist. A chain from A <: I <: !I. If I does not exit, either
       -- this method have to stay or we have to remove the implements interface.
-      forall (superAbstractDeclarationPaths (mkAbsMethodId cls method) hry)
-        \(decl, path) -> given (not $ (decl ^. className) `S.member` scope) $
+      forall (superDeclarationPaths (mkAbsMethodId cls method) hry)
+        \(decl, isAbstract, path) -> given
+          (isAbstract && not ((decl ^. className) `S.member` scope)) $
           unbrokenPath path ==> m
 
     , -- TODO: Nessary?
@@ -325,7 +326,7 @@ logic scope hry = \case
 
     requireMethod mid = or
       [ methodExist mid' /\ unbrokenPath path
-      | (mid', path) <- superDefinitionPaths mid hry
+      | (mid', _, path) <- superDeclarationPaths mid hry
       ]
 
     infixl 6 `requireSubtype`
