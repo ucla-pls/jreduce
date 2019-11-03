@@ -290,7 +290,15 @@ logic scope hry = \case
         _ -> true
     | (state, B.opcode -> oper) <-
         V.toList $ V.zip typeCheckStates (code ^. codeByteCode)
-    , let stack n = state ^?! tcStack.ix n
+    , let stack n =
+            case state ^? tcStack.ix n of
+              Just a -> a
+              Nothing ->
+                error $
+                "Incompatable stack length: " <> show n
+                <> " at: " <> show theMethodName
+                <> " bc: " <> show oper
+                <> " current stack: " <> show (state^.tcStack)
     ]
     where
       theMethodName =
