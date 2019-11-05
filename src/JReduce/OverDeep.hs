@@ -1,5 +1,7 @@
 -- |
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -31,6 +33,10 @@ import qualified Data.Text.Lazy.Builder as Builder
 import Data.Maybe
 import qualified Data.List as List
 import Data.Foldable
+import GHC.Generics (Generic)
+
+-- deepseq
+import Control.DeepSeq
 
 -- reduce-util
 import Control.Reduce.Reduction
@@ -80,7 +86,7 @@ data Fact
   | IsInnerClass ClassName ClassName
   | MethodThrows AbsMethodId ClassName
   | Meta
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Generic, NFData)
 
 displayFact :: Fact -> Builder.Builder
 displayFact = \case

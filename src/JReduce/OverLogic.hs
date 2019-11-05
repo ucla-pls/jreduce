@@ -1,5 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -26,7 +28,7 @@ import qualified Data.Vector as V
 import Data.Foldable hiding (and, or)
 import Data.Maybe
 import Data.Monoid
-import Control.Monad.Fail
+import qualified Data.List as List
 import Prelude hiding (fail, not, and, or)
 
 -- jvmhs
@@ -35,6 +37,9 @@ import Jvmhs.TypeCheck
 import Jvmhs.Data.Signature
 import Jvmhs.Data.Code
 import Jvmhs
+
+-- nfdata
+import           Control.DeepSeq
 
 -- jvm-binary
 import qualified Language.JVM.Attribute.BootstrapMethods as B
@@ -46,6 +51,9 @@ import Control.Reduce.Boolean
 import Control.Reduce.Problem
 import Control.Reduce.Util.Logger as L
 
+-- unorderd-containers
+import qualified Data.HashSet               as HS
+
 -- jreduce
 import JReduce.Target
 import JReduce.Config
@@ -55,29 +63,23 @@ import JReduce.OverDeep ( Item (..), Fact (..)
                         , _ITarget
                         )
 
-data GraphLang a = GVar a | Deps a a
-
-underCompiler :: Cnf -> Maybe [ GraphLang Int ]
-underCompiler = fmap catMaybes . mapM fn where
-  fn (Clause trs fls) = case (IS.toList trs, IS.toList fls) of
-      ([] , [] )   -> fail "False"
-      ([] , [a])  -> return $ Just (GVar a)
-      ([_], [] )  -> fail "Illigal expression"
-      ([a], [b]) -> return $ Just (Deps b a)
-      _ -> return $ Nothing
-
-overCompiler :: Cnf -> Maybe [ GraphLang Int ]
-overCompiler = mapM fn where
-  fn (Clause trs fls) = case (IS.toList trs, IS.toList fls) of
-      ([] , [] ) -> fail "False"
-      ([] , a:_) -> return $ GVar a
-      (_:_, [] )  -> fail "Illigal expression"
-      (a:_, b:_) -> return $ Deps b a
-
 decompose :: Ord a => S.Set a -> (M.Map a Int, V.Vector a)
 decompose a =
   (M.fromAscList . toList $ imap (flip (,)) res, res)
   where res = V.fromList (toList a)
+
+checkScope :: S.Set ClassName -> Fact -> Bool
+checkScope scope = \case
+  ClassExist     a    -> fn $ a
+  CodeIsUntuched m    -> fn $ m ^. className
+  HasSuperClass  cn _ -> fn $ cn
+  HasInterface   cn _ -> fn $ cn
+  FieldExist     f    -> fn $ f ^. className
+  MethodExist    m    -> fn $ m ^. className
+  IsInnerClass   cn _ -> fn $ cn
+  MethodThrows   m _  -> fn $ m ^. className
+  Meta                -> True
+  where fn k = k `S.member` scope
 
 describeGraphProblem ::
   MonadIOReader Config m
@@ -86,36 +88,35 @@ describeGraphProblem ::
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
 describeGraphProblem b wf p = do
-  describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
-  where
-    genKeyFun = do
+  -- describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
+  let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
+  (keyFun, scope) <- L.phase "Initializing key function" $ do
       let targets = targetClasses $ _problemInitial p
       let scope = S.fromList ( map (view className) targets)
       hry <- fetchHierachy targets
-      pure $ \i -> do
-        let
-          (f, tf) = logic scope hry i
-          (it, res) = decompose (foldMap S.singleton tf)
-          tf' = fmap (it M.!) tf
+      pure .(,scope) $ \i -> pure $ logic hry i
 
-        L.debug $ L.displayf "Found Expression of size: %d" (V.length res)
-        L.debug $ L.display tf'
+  L.phase "Precalculating the Reduction" $ do
+    core <- view cfgCore
+    L.info . L.displayf "Requiring %d core items." $ List.length core
 
-        let cnf = cnfCompiler tf'
-       
-        L.debug $ L.displayf "Found Cnf of size: %d" (length cnf)
+    ((grph, coreSet, cls, _), p3) <-
+      toLogicGraphReductionM b
+      (\x -> do
+         (k, t) <- keyFun x
+         let txt = serializeWith displayFact k
+             isCore = txt `HS.member` core
+         t' <- L.logtime L.DEBUG ("Processing " <> displayText txt <> (if isCore then " CORE" else ""))  $
+           deepseq t (pure t)
+         return (k, if isCore then tt k /\ t' else t')
+      ) (checkScope scope) itemR p2
 
-        pure
-          ( f
-          , [ (res V.! x, res V.! y)
-            | Deps x y <- concat
-              $ if b then overCompiler cnf else underCompiler cnf
-            ]
-          )
+    dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet cls
+    return p3
 
 
-logic :: S.Set ClassName -> Hierarchy -> Item -> (Fact, Term Fact)
-logic scope hry = \case
+logic :: Hierarchy -> Item -> (Fact, Term Fact)
+logic hry = \case
 
   IContent (ClassFile cls) -> ClassExist (cls ^. className)
     `withLogic` \c ->
@@ -186,9 +187,8 @@ logic scope hry = \case
       -- does exist. A chain from A <: I <: !I. If I does not exit, either
       -- this method have to stay or we have to remove the implements interface.
       forall (superDeclarationPaths (mkAbsMethodId cls method) hry)
-        \(decl, isAbstract, path) -> given
-          (isAbstract && not ((decl ^. className) `S.member` scope)) $
-          unbrokenPath path ==> m
+        \(decl, isAbstract, path) -> given isAbstract
+          $ methodExist decl /\ unbrokenPath path ==> m
 
     , -- TODO: Nessary?
       -- Finally we requier that if a method is synthetic is should be
@@ -390,10 +390,10 @@ isSubclass cn1 cn2 = \case
   Extend -> hasSuperClass cn1 cn2
 
 hasInterface :: ClassName -> ClassName -> Term Fact
-hasInterface cn1 cn2 = TVar (HasInterface cn1 cn2)
+hasInterface cn1 cn2 = tt (HasInterface cn1 cn2)
 
 hasSuperClass :: ClassName -> ClassName -> Term Fact
-hasSuperClass cn1 cn2 = TVar (HasSuperClass cn1 cn2)
+hasSuperClass cn1 cn2 = tt (HasSuperClass cn1 cn2)
 
 requireMethodHandle :: B.MethodHandle B.High -> Term Fact
 requireMethodHandle = undefined
@@ -408,21 +408,19 @@ requireClassNamesOf l a =
   forallOf (l . classNames) a classExist
 
 classExist :: HasClassName a => a -> Term Fact
-classExist cn = TVar (ClassExist (cn^.className))
+classExist cn = tt (ClassExist (cn^.className))
 
 fieldExist :: AbsFieldId -> Term Fact
 fieldExist f =
-  TVar (FieldExist f)
+  tt (FieldExist f)
 
 methodExist :: AbsMethodId -> Term Fact
 methodExist f =
-  TVar (MethodExist f)
+  tt (MethodExist f)
 
 codeIsUntuched :: AbsMethodId -> Term Fact
 codeIsUntuched m =
-  TVar (CodeIsUntuched m)
-
+  tt (CodeIsUntuched m)
 
 withLogic :: Fact -> (Term Fact -> [Term Fact]) -> (Fact, Term Fact)
-withLogic f fn = (f, and (fn (TVar f)))
-
+withLogic f fn = (f, and (fn (tt f)))
