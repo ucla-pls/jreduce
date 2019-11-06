@@ -141,7 +141,8 @@ logic hry = \case
 
   IField (cls, field) -> FieldExist (mkAbsFieldId cls field)
     `withLogic` \f ->
-    [ -- If a field is final it has to be set. This happens either in the
+    [ f ==> requireClassNamesOf fieldType field
+    , -- If a field is final it has to be set. This happens either in the
       -- class initializers or in the constructors. This means we cannot stub
       -- these methods.
       given (FFinal `S.member` flags)
