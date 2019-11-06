@@ -168,6 +168,7 @@ logic hry = \case
   IField (cls, field) -> FieldExist (mkAbsFieldId cls field)
     `withLogic` \f ->
     [ f ==> requireClassNamesOf cls fieldType field
+    , f ==> requireClassNamesOf cls (fieldSignature._Just) field
     , -- If a field is final it has to be set. This happens either in the
       -- class initializers or in the constructors. This means we cannot stub
       -- these methods.
