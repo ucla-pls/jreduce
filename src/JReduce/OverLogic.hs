@@ -51,8 +51,8 @@ import Language.JVM.ByteCode (ByteCodeOpr (..))
 -- filepath
 import System.FilePath
 
--- directory
-import System.Directory
+-- -- directory
+-- import System.Directory
 
 -- text
 import qualified Data.Text as Text
@@ -123,9 +123,10 @@ describeGraphProblem b wf p = do
            deepseq t (pure t)
 
          whenM (view cfgDumpItems) . liftIO $ do
-          createDirectoryIfMissing False (wf </> "items")
-          writeFile (wf </> "items" </> Text.unpack txt <.> "txt")
-            (show (serializeWith displayFact <$> t'))
+          appendFile (wf </> "items.txt" )
+            ( Text.unpack txt ++ "\n"
+              ++ show (serializeWith displayFact <$> t') ++ "\n"
+            )
 
          return (k, if isCore then tt k /\ t' else t')
       ) (checkScope scope) itemR p2
