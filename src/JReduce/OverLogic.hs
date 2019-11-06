@@ -98,7 +98,7 @@ describeGraphProblem ::
   -> FilePath
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
-describeGraphProblem b wf p = do
+describeGraphProblem isOver wf p = do
   -- describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
   let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
   (keyFun, scope) <- L.phase "Initializing key function" $ do
@@ -112,7 +112,7 @@ describeGraphProblem b wf p = do
     L.info . L.displayf "Requiring %d core items." $ List.length core
 
     ((grph, coreSet, cls, _), p3) <-
-      toLogicGraphReductionM b
+      toLogicGraphReductionM isOver
       (\x -> do
          (k, t) <- keyFun x
          let txt = serializeWith displayFact k
@@ -122,10 +122,15 @@ describeGraphProblem b wf p = do
             <> (if isCore then " CORE" else "")) $
            deepseq t (pure t)
 
+         let
+           t'' = serializeWith displayFact <$> t'
+           nnf = flattenNnf . nnfFromTerm . fromTerm $ t''
          whenM (view cfgDumpItems) . liftIO $ do
           appendFile (wf </> "items.txt" )
             ( Text.unpack txt ++ "\n"
-              ++ show (serializeWith displayFact <$> t') ++ "\n"
+              ++ show t'' ++ "\n"
+              ++ show nnf ++ "\n"
+              ++ show ((if isOver then overDependencies else underDependencies) nnf) ++ "\n"
             )
 
          return (k, if isCore then tt k /\ t' else t')
