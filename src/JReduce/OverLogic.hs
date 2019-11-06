@@ -124,11 +124,11 @@ logic hry = \case
       -- handled from here.
       forallOf (classBootstrapMethods.folded._Wrapped) cls
       \(B.BootstrapMethod mhandle args) ->
-        c ==> requireMethodHandle mhandle /\ requireClassNamesOf folded args
+        c ==> requireMethodHandle cls mhandle /\ requireClassNamesOf cls folded args
 
     , -- We also do not reduce type parameters. Thier requirements are just that
       -- all classes mention should exist if this class exist.
-      c ==> requireClassNamesOf (classTypeParameters.folded) cls
+      c ==> requireClassNamesOf cls (classTypeParameters.folded) cls
 
     , -- We also do also not reduce enclosing methods. If a class is enclosed
       -- in another class, require that to exist, and if the class is enclosed
@@ -136,12 +136,12 @@ logic hry = \case
       forallOf (classEnclosingMethod._Just) cls
       \(cn, mMId) -> c ==> case mMId of
         Just m -> methodExist (mkAbsMethodId cn m)
-        Nothing -> classExist cn
+        Nothing -> requireClassName cls cn
     ]
 
   IField (cls, field) -> FieldExist (mkAbsFieldId cls field)
     `withLogic` \f ->
-    [ f ==> requireClassNamesOf fieldType field
+    [ f ==> requireClassNamesOf cls fieldType field
     , -- If a field is final it has to be set. This happens either in the
       -- class initializers or in the constructors. This means we cannot stub
       -- these methods.
@@ -164,12 +164,12 @@ logic hry = \case
     `withLogic` \m ->
     [ -- Since we do not remove the return argument or the arguemnts we have to build
       -- their requirements here.
-      m ==> requireClassNamesOf
+      m ==> requireClassNamesOf cls
       (methodReturn ._Just <> methodArguments.folded)
       method
 
     , -- Type parameters might contain classes
-      m ==> requireClassNamesOf
+      m ==> requireClassNamesOf cls
       (methodTypeParameters.folded)
       method
 
@@ -202,20 +202,20 @@ logic hry = \case
     `withLogic` \i ->
     [ -- An Implements only depends on the interface that it implements, and
       -- its type parameters.
-      i ==> requireClassNames ct
+      i ==> requireClassNames cls ct
     ]
 
   ISuperClass (cls, ct) -> HasSuperClass (cls^.className) (ct^.classTypeName)
     `withLogic` \s ->
     [ -- An Implements only depends on the class of the supertype and its type
       -- parameters.
-      s ==> requireClassNames ct
+      s ==> requireClassNames cls ct
     ]
 
   IInnerClass (cls, ic) -> IsInnerClass (cls^.className) (ic^.innerClass)
     `withLogic` \i ->
     [ -- An innerclass depends on all classes referenced by the innerClass.
-      i ==> requireClassNames ic
+      i ==> requireClassNames cls ic
 
     , -- If inner class is ponting to itself, then it required as long at the
       -- class exist.
@@ -232,7 +232,7 @@ logic hry = \case
     (fromMaybe "java/lang/Throwable" (mt^?_ThrowsClass.classTypeName))
     `withLogic` \m ->
     [ -- A method throws statement depends on all the class it mentions.
-      m ==> requireClassNames mt
+      m ==> requireClassNames cls mt
 
       -- TODO: An indepth analysis of throws of the code?
     , codeIsUntuched (mkAbsMethodId cls method) ==> m
@@ -243,9 +243,9 @@ logic hry = \case
     [ -- If the code was not stubbed, then we have to require that the
       -- classes in the exception table, stack map, and byte-code instructions
       -- exits
-      c ==> requireClassNamesOf (codeExceptionTable.folded) code
-    , c ==> requireClassNamesOf (codeStackMap._Just) code
-    , c ==> requireClassNamesOf (codeByteCode.folded) code
+      c ==> requireClassNamesOf cls (codeExceptionTable.folded) code
+    , c ==> requireClassNamesOf cls (codeStackMap._Just) code
+    , c ==> requireClassNamesOf cls (codeByteCode.folded) code
     ] ++
     [ c ==> case oper of
         ArrayStore _ ->
@@ -396,20 +396,26 @@ hasInterface cn1 cn2 = tt (HasInterface cn1 cn2)
 hasSuperClass :: ClassName -> ClassName -> Term Fact
 hasSuperClass cn1 cn2 = tt (HasSuperClass cn1 cn2)
 
-requireMethodHandle :: B.MethodHandle B.High -> Term Fact
-requireMethodHandle = undefined
+requireMethodHandle :: HasClassName c => c -> B.MethodHandle B.High -> Term Fact
+requireMethodHandle cls = requireClassNames cls
 
-requireClassNames :: Inspectable a => a -> Term Fact
-requireClassNames = andOf (classNames . to classExist)
+requireClassNames :: (HasClassName c, Inspectable a) => c -> a -> Term Fact
+requireClassNames c =
+  andOf (classNames . to (requireClassName c))
+
+requireClassName :: (HasClassName c, HasClassName a) => c -> a -> Term Fact
+requireClassName oc ic =
+  classExist ic /\ isInnerClass oc ic
 
 requireClassNamesOf ::
-  Inspectable a
-  => Getting (Endo (Endo (Term Fact))) s a -> s -> (Term Fact)
-requireClassNamesOf l a =
-  forallOf (l . classNames) a classExist
+  (HasClassName c, Inspectable a)
+  => c -> Getting (Endo (Endo (Term Fact))) s a -> s -> (Term Fact)
+requireClassNamesOf c l a =
+  forallOf (l . classNames) a (requireClassName c)
 
-classExist :: HasClassName a => a -> Term Fact
-classExist cn = tt (ClassExist (cn^.className))
+classExist :: HasClassName a =>  a -> Term Fact
+classExist (view className -> cn) =
+  tt (ClassExist cn)
 
 fieldExist :: AbsFieldId -> Term Fact
 fieldExist f =
@@ -422,6 +428,10 @@ methodExist f =
 codeIsUntuched :: AbsMethodId -> Term Fact
 codeIsUntuched m =
   tt (CodeIsUntuched m)
+
+isInnerClass :: (HasClassName c1, HasClassName c2) => c1 -> c2 -> Term Fact
+isInnerClass (view className -> c1) (view className -> c2) =
+  tt (IsInnerClass c1 c2)
 
 withLogic :: Fact -> (Term Fact -> [Term Fact]) -> (Fact, Term Fact)
 withLogic f fn = (f, and (fn (tt f)))
