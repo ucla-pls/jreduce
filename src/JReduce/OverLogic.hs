@@ -161,7 +161,7 @@ logic hry = \case
       -- in a method require that to exist.
       forallOf (classEnclosingMethod._Just) cls
       \(cn, mMId) -> c ==> case mMId of
-        Just m -> methodExist (mkAbsMethodId cn m) /\ isInnerClass cls cn
+        Just m -> methodExist (mkAbsMethodId cn m) /\ isInnerClassOf cls cn
         Nothing -> requireClassName cls cn
     ]
 
@@ -266,8 +266,14 @@ logic hry = \case
     [ -- A method throws statement depends on all the class it mentions.
       m ==> requireClassNames cls mt
 
-      -- TODO: An indepth analysis of throws of the code?
-    , codeIsUntuched (mkAbsMethodId cls method) ==> m
+    , -- TODO: An indepth analysis of throws of the code?
+      codeIsUntuched (mkAbsMethodId cls method) ==> m
+
+    -- , -- TODO: I this method extends a method it has to have it's execeptions.
+    --   forall (superDeclarationPaths mt hry)
+    --     \(decl, isAbstract, path) -> given isAbstract
+    --       $ methodExist decl /\ unbrokenPath path ==> m
+
     ]
 
   ICode ((cls, method), code) -> CodeIsUntuched theMethodName
@@ -370,7 +376,6 @@ logic hry = \case
 
   where
 
-
     infixl 6 `requireSubtype`
     requireSubtype ::
       (AsTypeInfo a, AsTypeInfo b)
@@ -437,7 +442,7 @@ requireClassNames c =
 
 requireClassName :: (HasClassName c, HasClassName a) => c -> a -> Term Fact
 requireClassName oc ic =
-  classExist ic /\ isInnerClass oc ic
+  classExist ic /\ isInnerClassOf oc ic
 
 requireClassNamesOf ::
   (HasClassName c, Inspectable a)
@@ -458,25 +463,24 @@ methodExist f =
   tt (MethodExist f)
 
 requireField :: HasClassName c => Hierarchy -> c -> AbsFieldId -> Term Fact
-requireField hry cn fid = isInnerClass cn fid /\ or
+requireField hry cn fid = isInnerClassOf cn fid /\ or
   [ fieldExist fid' /\ unbrokenPath path
   | (fid', path) <- fieldLocationPaths fid hry
   ]
 
 requireMethod :: HasClassName c => Hierarchy -> c -> AbsMethodId -> Term Fact
-requireMethod hry cn mid = isInnerClass cn mid /\ or
+requireMethod hry cn mid = isInnerClassOf cn mid /\ or
   [ methodExist mid' /\ unbrokenPath path
   | (mid', _, path) <- superDeclarationPaths mid hry
   ]
-
 
 codeIsUntuched :: AbsMethodId -> Term Fact
 codeIsUntuched m =
   tt (CodeIsUntuched m)
 
-isInnerClass :: (HasClassName c1, HasClassName c2) => c1 -> c2 -> Term Fact
-isInnerClass (view className -> c1) (view className -> c2) =
-  tt (IsInnerClass c1 c2)
+isInnerClassOf :: (HasClassName c1, HasClassName c2) => c1 -> c2 -> Term Fact
+isInnerClassOf (view className -> c1) (view className -> c2) =
+   given (isInnerClass c2) (tt (IsInnerClass c1 c2))
 
 withLogic :: Fact -> (Term Fact -> [Term Fact]) -> (Fact, Term Fact)
 withLogic f fn = (f, and (fn (tt f)))
