@@ -45,6 +45,7 @@ data DumpConfig = DumpConfig
   { _cfgDumpGraph        :: !Bool
   , _cfgDumpClosures     :: !Bool
   , _cfgDumpCore         :: !Bool
+  , _cfgDumpItems        :: !Bool
   } deriving (Show)
 
 makeClassy ''DumpConfig
@@ -141,10 +142,15 @@ parseDumpConfig = do
     $ long "dump-core" <> hidden
     <> help "dump core to the workfolder."
 
+  _dumpItems <- switch
+    $ long "dump-items" <> hidden
+    <> help "dump item terms to the workfolder."
+
   return $ DumpConfig
     { _cfgDumpGraph    = _dump || _dumpGraph
     , _cfgDumpClosures = _dump || _dumpClosures
     , _cfgDumpCore     = _dump || _dumpCore
+    , _cfgDumpItems    = _dump || _dumpItems
     }
      
 

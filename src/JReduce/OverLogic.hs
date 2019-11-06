@@ -14,7 +14,7 @@
 module JReduce.OverLogic where
 
 -- lens
-import Control.Lens hiding (andOf, orOf)
+import Control.Lens hiding (andOf, orOf, (<.>))
 
 -- containers
 import qualified Data.Set as S
@@ -28,6 +28,8 @@ import qualified Data.Vector as V
 import Data.Foldable hiding (and, or)
 import Data.Maybe
 import Data.Monoid
+import Control.Monad
+import Control.Monad.IO.Class
 import qualified Data.List as List
 import Prelude hiding (fail, not, and, or)
 
@@ -45,6 +47,15 @@ import           Control.DeepSeq
 import qualified Language.JVM.Attribute.BootstrapMethods as B
 import qualified Language.JVM as B
 import Language.JVM.ByteCode (ByteCodeOpr (..))
+
+-- filepath
+import System.FilePath
+
+-- directory
+import System.Directory
+
+-- text
+import qualified Data.Text as Text
 
 -- reduce-util
 import Control.Reduce.Boolean
@@ -106,8 +117,16 @@ describeGraphProblem b wf p = do
          (k, t) <- keyFun x
          let txt = serializeWith displayFact k
              isCore = txt `HS.member` core
-         t' <- L.logtime L.DEBUG ("Processing " <> displayText txt <> (if isCore then " CORE" else ""))  $
+         t' <- L.logtime L.DEBUG
+           ("Processing " <> displayText txt
+            <> (if isCore then " CORE" else "")) $
            deepseq t (pure t)
+
+         whenM (view cfgDumpItems) . liftIO $ do
+          createDirectoryIfMissing False (wf </> "items")
+          writeFile (wf </> "items" </> Text.unpack txt <.> "txt")
+            (show (serializeWith displayFact <$> t'))
+
          return (k, if isCore then tt k /\ t' else t')
       ) (checkScope scope) itemR p2
 
@@ -451,3 +470,6 @@ isInnerClass (view className -> c1) (view className -> c2) =
 
 withLogic :: Fact -> (Term Fact -> [Term Fact]) -> (Fact, Term Fact)
 withLogic f fn = (f, and (fn (tt f)))
+
+whenM :: Monad m => (m Bool) -> m () -> m ()
+whenM mb m = mb >>= \b -> when b m

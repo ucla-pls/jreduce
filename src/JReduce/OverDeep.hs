@@ -510,3 +510,4 @@ payload p fn a =
 methodIsAbstract :: Method -> Bool
 methodIsAbstract =
   view (methodAccessFlags . contains MAbstract)
+
