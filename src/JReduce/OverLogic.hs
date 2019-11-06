@@ -124,7 +124,8 @@ logic hry = \case
       -- handled from here.
       forallOf (classBootstrapMethods.folded._Wrapped) cls
       \(B.BootstrapMethod mhandle args) ->
-        c ==> requireMethodHandle cls mhandle /\ requireClassNamesOf cls folded args
+        c ==> requireMethodHandle hry cls mhandle
+        /\ requireClassNamesOf cls folded args
 
     , -- We also do not reduce type parameters. Thier requirements are just that
       -- all classes mention should exist if this class exist.
@@ -135,7 +136,7 @@ logic hry = \case
       -- in a method require that to exist.
       forallOf (classEnclosingMethod._Just) cls
       \(cn, mMId) -> c ==> case mMId of
-        Just m -> methodExist (mkAbsMethodId cn m)
+        Just m -> methodExist (mkAbsMethodId cn m) /\ isInnerClass cls cn
         Nothing -> requireClassName cls cn
     ]
 
@@ -181,8 +182,10 @@ logic hry = \case
       -- require it to be true or one of it's super classes to have implemented
       -- it.
       forall (implementationPaths (cls^.className) hry)
-        \(def, isAbstract, path) -> given (not isAbstract)
-          $ m /\ unbrokenPath path ==> requireMethod (mkAbsMethodId def method)
+        \(def, isAbstract, path) ->
+          given (not isAbstract)
+          $ m /\ unbrokenPath path
+          ==> requireMethod hry cls (mkAbsMethodId def method)
       else
       -- If the methods is not abstract, make sure that the method defintion
       -- does exist. A chain from A <: I <: !I. If I does not exit, either
@@ -256,14 +259,14 @@ logic hry = \case
         Get fa fid ->
           -- For a get value is valid the field has to exist, and the first
           -- element on the stack has to be a subclass of fields class.
-          requireField fid
+          requireField hry cls fid
           /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
 
         Put fa fid ->
           -- For a put value is valid the field has to exist, and the first
           -- element on the stack has to be a subclass of fields class, and
           -- the second element have to be a subtype of the type of the field
-          requireField fid
+          requireField hry cls fid
           /\ stack 0 `requireSubtype` fid^.fieldType
           /\ given (fa /= B.FldStatic)
             (stack 1 `requireSubtype` fid^.className)
@@ -277,7 +280,7 @@ logic hry = \case
             (methodRequirements, stackTypes) =
               case methodInvokeTypes a of
                 Right (isStatic, m) ->
-                  ( requireMethod (AbsMethodId $ m^.asInClass)
+                  ( requireMethod hry cls (AbsMethodId $ m^.asInClass)
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
                     <> (map asTypeInfo $ m^.methodArgumentTypes)
                   )
@@ -338,15 +341,6 @@ logic hry = \case
 
   where
 
-    requireField fid = or
-      [ fieldExist fid' /\ unbrokenPath path
-      | (fid', path) <- fieldLocationPaths fid hry
-      ]
-
-    requireMethod mid = or
-      [ methodExist mid' /\ unbrokenPath path
-      | (mid', _, path) <- superDeclarationPaths mid hry
-      ]
 
     infixl 6 `requireSubtype`
     requireSubtype ::
@@ -396,8 +390,17 @@ hasInterface cn1 cn2 = tt (HasInterface cn1 cn2)
 hasSuperClass :: ClassName -> ClassName -> Term Fact
 hasSuperClass cn1 cn2 = tt (HasSuperClass cn1 cn2)
 
-requireMethodHandle :: HasClassName c => c -> B.MethodHandle B.High -> Term Fact
-requireMethodHandle cls = requireClassNames cls
+requireMethodHandle :: HasClassName c => Hierarchy -> c -> B.MethodHandle B.High -> Term Fact
+requireMethodHandle hry cls = \case
+  B.MHField (B.MethodHandleField _ f)
+    -> requireField hry cls f
+  B.MHMethod a -> requireMethod hry cls . AbsMethodId . view asInClass $ case a of
+    B.MHInvokeVirtual rt -> rt
+    B.MHInvokeStatic (B.AbsVariableMethodId _ rt) -> rt
+    B.MHInvokeSpecial (B.AbsVariableMethodId _ rt) -> rt
+    B.MHNewInvokeSpecial rt -> rt
+  B.MHInterface (B.MethodHandleInterface (B.AbsInterfaceMethodId rt)) ->
+    requireMethod hry cls . AbsMethodId . view asInClass $ rt
 
 requireClassNames :: (HasClassName c, Inspectable a) => c -> a -> Term Fact
 requireClassNames c =
@@ -424,6 +427,19 @@ fieldExist f =
 methodExist :: AbsMethodId -> Term Fact
 methodExist f =
   tt (MethodExist f)
+
+requireField :: HasClassName c => Hierarchy -> c -> AbsFieldId -> Term Fact
+requireField hry cn fid = isInnerClass cn fid /\ or
+  [ fieldExist fid' /\ unbrokenPath path
+  | (fid', path) <- fieldLocationPaths fid hry
+  ]
+
+requireMethod :: HasClassName c => Hierarchy -> c -> AbsMethodId -> Term Fact
+requireMethod hry cn mid = isInnerClass cn mid /\ or
+  [ methodExist mid' /\ unbrokenPath path
+  | (mid', _, path) <- superDeclarationPaths mid hry
+  ]
+
 
 codeIsUntuched :: AbsMethodId -> Term Fact
 codeIsUntuched m =
