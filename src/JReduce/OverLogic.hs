@@ -101,7 +101,7 @@ describeGraphProblem ::
 describeGraphProblem isOver wf p = do
   -- describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
   let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
-  (keyFun, scope) <- L.phase "Initializing key function" $ do
+  (keyFun, _) <- L.phase "Initializing key function" $ do
       let targets = targetClasses $ _problemInitial p
       let scope = S.fromList ( map (view className) targets)
       hry <- fetchHierachy targets
@@ -134,7 +134,7 @@ describeGraphProblem isOver wf p = do
             )
 
          return (k, if isCore then tt k /\ t' else t')
-      ) (checkScope scope) itemR p2
+      ) (const True) itemR p2
 
     dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet cls
     return p3
