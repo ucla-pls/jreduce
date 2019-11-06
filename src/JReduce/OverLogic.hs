@@ -239,6 +239,9 @@ logic hry = \case
     [ -- An Implements only depends on the class of the supertype and its type
       -- parameters.
       s ==> requireClassNames cls ct
+      -- We also require that one of the constructors to still exists
+      -- TODO: Think more about this.
+    , s ==> existOf classConstructors cls codeIsUntuched
     ]
 
   IInnerClass (cls, ic) -> IsInnerClass (cls^.className) (ic^.innerClass)
