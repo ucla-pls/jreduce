@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: cba260b30bb47461a8a909eb2ded01f4b5271ce627bc9580595b0b8f143f1e10
+-- hash: 00d150f2e38a973426a349d3c1fff74058fe1c9db4378fbe73a479c6e16037f3
 
 name:           jreduce
 version:        0.0.1
@@ -25,10 +25,12 @@ source-repository head
 
 library
   exposed-modules:
+      Data.Boolean
       JReduce
       JReduce.Config
       JReduce.OverClasses
       JReduce.OverDeep
+      JReduce.OverLogic
       JReduce.OverStubs
       JReduce.Target
   other-modules:
@@ -37,7 +39,8 @@ library
       src
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints
   build-depends:
-      base >=4.10 && <4.13
+      aeson
+    , base >=4.10 && <4.13
     , bytestring
     , cassava
     , containers
@@ -70,7 +73,8 @@ executable jreduce
       app
   ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -O2 -threaded
   build-depends:
-      base >=4.10 && <4.13
+      aeson
+    , base >=4.10 && <4.13
     , bytestring
     , cassava
     , containers

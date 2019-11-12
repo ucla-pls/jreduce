@@ -54,6 +54,12 @@ import System.FilePath
 -- -- directory
 -- import System.Directory
 
+-- bytestring
+import qualified Data.ByteString.Lazy as BL
+
+-- aseon
+import Data.Aeson
+
 -- text
 import qualified Data.Text as Text
 
@@ -111,7 +117,7 @@ describeGraphProblem isOver wf p = do
     core <- view cfgCore
     L.info . L.displayf "Requiring %d core items." $ List.length core
 
-    ((grph, coreSet, cls, _), p3) <-
+    ((grph, coreSet, cls, t), p3) <-
       toLogicGraphReductionM isOver
       (\x -> do
          (k, t) <- keyFun x
@@ -135,6 +141,10 @@ describeGraphProblem isOver wf p = do
 
          return (k, if isCore then tt k /\ t' else t')
       ) (const True) itemR p2
+
+    whenM (view cfgDumpItems) . liftIO $ do
+      BL.writeFile (wf </> "nnf.json")
+        $ encode t
 
     dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet cls
     return p3
