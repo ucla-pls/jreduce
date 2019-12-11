@@ -1,10 +1,10 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.33.0.
+-- This file has been generated from package.yaml by hpack version 0.32.0.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 00d150f2e38a973426a349d3c1fff74058fe1c9db4378fbe73a479c6e16037f3
+-- hash: 0a2cef50f8f6fb19273c301f41176e8a370a964abf5e7afa95eac01a98805ccd
 
 name:           jreduce
 version:        0.0.1
@@ -25,7 +25,6 @@ source-repository head
 
 library
   exposed-modules:
-      Data.Boolean
       JReduce
       JReduce.Config
       JReduce.OverClasses
