@@ -36,7 +36,6 @@ import Prelude hiding (fail, not, and, or)
 -- jvmhs
 import Jvmhs.Data.Type
 import Jvmhs.TypeCheck
-import Jvmhs.Data.Signature
 import Jvmhs.Data.Code
 import Jvmhs
 
@@ -44,7 +43,6 @@ import Jvmhs
 import           Control.DeepSeq
 
 -- jvm-binary
-import qualified Language.JVM.Attribute.BootstrapMethods as B
 import qualified Language.JVM as B
 import Language.JVM.ByteCode (ByteCodeOpr (..))
 
@@ -79,6 +77,12 @@ import JReduce.OverDeep ( Item (..), Fact (..)
                         , itemR, displayFact
                         , _ITarget
                         )
+
+requireClassNamesOf ::
+  (HasClassName c, HasClassNames a)
+  => c -> Getting (Endo (Endo (Term Fact))) s a -> s -> Term Fact
+requireClassNamesOf c l a =
+  forallOf (l . classNames) a (requireClassName c)
 
 decompose :: Ord a => S.Set a -> (M.Map a Int, V.Vector a)
 decompose a =
@@ -157,10 +161,10 @@ logic hry = \case
     `withLogic` \c ->
     [ -- We do currently not reduce bootstrap methods, so their requirements are
       -- handled from here.
-      forallOf (classBootstrapMethods.folded._Wrapped) cls
-      \(B.BootstrapMethod mhandle args) ->
-        c ==> requireMethodHandle hry cls mhandle
-        /\ requireClassNamesOf cls folded args
+      forallOf (classBootstrapMethods.folded) cls
+        \(BootstrapMethod mhandle args) ->
+          c ==> requireMethodHandle hry cls mhandle
+          /\ requireClassNamesOf cls folded args
 
     , -- We also do not reduce type parameters. Thier requirements are just that
       -- all classes mention should exist if this class exist.
@@ -178,7 +182,6 @@ logic hry = \case
   IField (cls, field) -> FieldExist (mkAbsFieldId cls field)
     `withLogic` \f ->
     [ f ==> requireClassNamesOf cls fieldType field
-    , f ==> requireClassNamesOf cls (fieldSignature._Just) field
     , -- If a field is final it has to be set. This happens either in the
       -- class initializers or in the constructors. This means we cannot stub
       -- these methods.
@@ -201,9 +204,7 @@ logic hry = \case
     `withLogic` \m ->
     [ -- Since we do not remove the return argument or the arguemnts we have to build
       -- their requirements here.
-      m ==> requireClassNamesOf cls
-      (methodReturn ._Just <> methodArguments.folded)
-      method
+      m ==> requireClassNamesOf cls (methodReturnType.classNames <> methodParameters.folded.classNames) method
 
     , -- Type parameters might contain classes
       m ==> requireClassNamesOf cls
@@ -237,14 +238,14 @@ logic hry = \case
       $ m ==> codeIsUntuched (mkAbsMethodId cls method)
     ]
 
-  IImplements (cls, ct) -> HasInterface (cls^.className) (ct^.classTypeName)
+  IImplements (cls, ct) -> HasInterface (cls^.className) (ct^.simpleType)
     `withLogic` \i ->
     [ -- An Implements only depends on the interface that it implements, and
       -- its type parameters.
       i ==> requireClassNames cls ct
     ]
 
-  ISuperClass (cls, ct) -> HasSuperClass (cls^.className) (ct^.classTypeName)
+  ISuperClass (cls, ct) -> HasSuperClass (cls^.className) (ct^.simpleType)
     `withLogic` \s ->
     [ -- An Implements only depends on the class of the supertype and its type
       -- parameters.
@@ -271,7 +272,7 @@ logic hry = \case
 
   IMethodThrows ((cls, method), mt) ->
     MethodThrows (mkAbsMethodId cls method)
-    (fromMaybe "java/lang/Throwable" (mt^?_ThrowsClass.classTypeName))
+    (mt^.simpleType)
     `withLogic` \m ->
     [ -- A method throws statement depends on all the class it mentions.
       m ==> requireClassNames cls mt
@@ -312,7 +313,7 @@ logic hry = \case
           -- element on the stack has to be a subclass of fields class, and
           -- the second element have to be a subtype of the type of the field
           requireField hry cls fid
-          /\ stack 0 `requireSubtype` fid^.fieldType
+          /\ stack 0 `requireSubtype` fid^.fieldIdType
           /\ given (fa /= B.FldStatic)
             (stack 1 `requireSubtype` fid^.className)
 
@@ -327,9 +328,9 @@ logic hry = \case
                 Right (isStatic, m) ->
                   ( requireMethod hry cls (AbsMethodId $ m^.asInClass)
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
-                    <> (map asTypeInfo $ m^.methodArgumentTypes)
+                    <> (map asTypeInfo $ m^.methodIdArgumentTypes)
                   )
-                Left m -> (true, map asTypeInfo $ m^.methodArgumentTypes)
+                Left m -> (true, map asTypeInfo $ m^.methodIdArgumentTypes)
 
         Throw ->
           -- A Throw operation requires that the first element on the stack is throwable.
@@ -343,8 +344,8 @@ logic hry = \case
 
         Return (Just B.LRef) ->
           -- We do require that the first element on the stack is a subtype of the return type.
-          forall (method^.methodReturnType)
-          \mt -> stack 0 `requireSubtype` mt
+          forall (method^.methodReturnType.simpleType)
+            \mt -> stack 0 `requireSubtype` mt
 
         _ -> true
     | (state, B.opcode -> oper) <-
@@ -417,8 +418,6 @@ logic hry = \case
       (Just TTop)
       (ti ^.._TRef.folded._JTArray)
    
-
-
 unbrokenPath :: SubclassPath -> Term Fact
 unbrokenPath path =
   and [ isSubclass f t e | (f, t, e) <- subclassEdges path]
@@ -446,7 +445,7 @@ requireMethodHandle hry cls = \case
   B.MHInterface (B.MethodHandleInterface (B.AbsInterfaceMethodId rt)) ->
     requireMethod hry cls . AbsMethodId . view asInClass $ rt
 
-requireClassNames :: (HasClassName c, Inspectable a) => c -> a -> Term Fact
+requireClassNames :: (HasClassName c, HasClassNames a) => c -> a -> Term Fact
 requireClassNames c =
   andOf (classNames . to (requireClassName c))
 
@@ -454,11 +453,6 @@ requireClassName :: (HasClassName c, HasClassName a) => c -> a -> Term Fact
 requireClassName oc ic =
   classExist ic /\ isInnerClassOf oc ic
 
-requireClassNamesOf ::
-  (HasClassName c, Inspectable a)
-  => c -> Getting (Endo (Endo (Term Fact))) s a -> s -> (Term Fact)
-requireClassNamesOf c l a =
-  forallOf (l . classNames) a (requireClassName c)
 
 classExist :: HasClassName a =>  a -> Term Fact
 classExist (view className -> cn) =
