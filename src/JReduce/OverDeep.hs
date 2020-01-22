@@ -46,6 +46,9 @@ import           Control.Reduce.Problem
 -- vector
 import qualified Data.Vector                   as V
 
+-- containers
+import qualified Data.IntMap.Strict            as IntMap
+
 -- unorderd-containers
 import qualified Data.HashMap.Strict           as HM
 
@@ -75,6 +78,7 @@ data Item
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
   | IMethodThrows ((Class, Method), (Annotated ThrowsType))
+  | IBootstrapMethod (Class, (Int, BootstrapMethod))
 
 makePrisms ''Item
 
@@ -87,6 +91,7 @@ data Fact
   | MethodExist AbsMethodId
   | IsInnerClass ClassName ClassName
   | MethodThrows AbsMethodId ClassName
+  | HasBootstrapMethod ClassName Int
   | Meta
   deriving (Eq, Ord, Generic, NFData)
 
@@ -100,7 +105,9 @@ displayFact = \case
   MethodExist md        -> toBuilder md
   IsInnerClass cn1 cn2  -> toBuilder cn1 <> "[innerOf]" <> toBuilder cn2
   MethodThrows m   cn   -> toBuilder m <> "[throws]" <> toBuilder cn
-  Meta                  -> "meta"
+  HasBootstrapMethod cn b ->
+    toBuilder cn <> "[bootstrap]" <> Builder.fromString (show b)
+  Meta -> "meta"
 
 data EdgeSelection = EdgeSelection
   { edgeSelectInterfacesToMethods :: Bool
@@ -289,6 +296,11 @@ keyFun es scope hry = \case
          ]
     )
 
+  IBootstrapMethod (cls, (i, b)) ->
+    ( HasBootstrapMethod (cls ^. className) i
+    , b ^.. classNames . to (makeClassExist cls)
+    )
+
   ITarget  _ -> (Meta, [])
   IContent _ -> (Meta, [])
 
@@ -416,25 +428,6 @@ keyFun es scope hry = \case
            )
   
   
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
   infixl 5 `requireSubtype`
   requireSubtype :: (AsTypeInfo a, AsTypeInfo b) => a -> b -> [Fact]
   requireSubtype a' b' = case (asTypeInfo a', asTypeInfo b') of
@@ -512,6 +505,8 @@ itemR f' = \case
       f
       (c ^. classInterfaces)
 
+    bootstrapMethods <- (iso IntMap.toAscList IntMap.fromAscList . listR . payload c . reduceAs _IBootstrapMethod) f (c ^.classBootstrapMethods)
+ 
     pure
       $  c
       &  classSuper
@@ -524,6 +519,8 @@ itemR f' = \case
       .~ innerClasses
       &  classInterfaces
       .~ _interfaces
+      &  classBootstrapMethods
+      .~ bootstrapMethods
 
   methodR :: Class -> Reduction Method Item
   methodR cls f m = do

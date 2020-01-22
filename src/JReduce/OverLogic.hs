@@ -91,15 +91,16 @@ decompose a =
 
 checkScope :: S.Set ClassName -> Fact -> Bool
 checkScope scope = \case
-  ClassExist     a    -> fn $ a
-  CodeIsUntuched m    -> fn $ m ^. className
-  HasSuperClass  cn _ -> fn $ cn
-  HasInterface   cn _ -> fn $ cn
-  FieldExist     f    -> fn $ f ^. className
-  MethodExist    m    -> fn $ m ^. className
-  IsInnerClass   cn _ -> fn $ cn
-  MethodThrows   m _  -> fn $ m ^. className
-  Meta                -> True
+  ClassExist     a           -> fn $ a
+  CodeIsUntuched m           -> fn $ m ^. className
+  HasSuperClass  cn _        -> fn $ cn
+  HasInterface   cn _        -> fn $ cn
+  FieldExist     f           -> fn $ f ^. className
+  MethodExist    m           -> fn $ m ^. className
+  IsInnerClass   cn _        -> fn $ cn
+  MethodThrows   m _         -> fn $ m ^. className
+  HasBootstrapMethod   cn _  -> fn $ cn
+  Meta                       -> True
   where fn k = k `S.member` scope
 
 describeGraphProblem ::
@@ -159,14 +160,7 @@ logic hry = \case
 
   IContent (ClassFile cls) -> ClassExist (cls ^. className)
     `withLogic` \c ->
-    [ -- We do currently not reduce bootstrap methods, so their requirements are
-      -- handled from here.
-      forallOf (classBootstrapMethods.folded) cls
-        \(BootstrapMethod mhandle args) ->
-          c ==> requireMethodHandle hry cls mhandle
-          /\ requireClassNamesOf cls folded args
-
-    , -- We also do not reduce type parameters. Thier requirements are just that
+    [ -- We also do not reduce type parameters. Thier requirements are just that
       -- all classes mention should exist if this class exist.
       c ==> requireClassNamesOf cls (classTypeParameters.folded) cls
 
@@ -270,6 +264,28 @@ logic hry = \case
       -- it must have an innerclass entry that describes that class.
     ]
 
+  IBootstrapMethod (cls, (i, btm)) -> 
+    HasBootstrapMethod (cls ^.className) i `withLogic` \bm -> 
+    [ bm ==> requireMethodHandle hry cls (btm^.bootstrapMethodHandle)
+    , bm ==> forallOf (bootstrapMethodArguments.folded) btm \case 
+        VClass rf -> requireClassNames cls rf
+        VMethodType md -> 
+          -- We would love to require the method, but we do not know the
+          -- abslocatio of the MethodDescriptor
+          requireClassNames cls md
+        VMethodHandle mh -> 
+          requireMethodHandle hry cls mh
+        _ -> true
+    ] 
+    -- -- We do currently not reduce bootstrap methods, so their requirements are
+    --   -- handled from here.
+    --   forallOf (classBootstrapMethods.folded) cls
+    --     \(BootstrapMethod mhandle args) ->
+    --       c ==> requireMethodHandle hry cls mhandle
+    --       /\ requireClassNamesOf cls folded args
+
+    -- , ]
+
   IMethodThrows ((cls, method), mt) ->
     MethodThrows (mkAbsMethodId cls method)
     (mt^.simpleType)
@@ -296,55 +312,61 @@ logic hry = \case
     , c ==> requireClassNamesOf cls (codeStackMap._Just) code
     , c ==> requireClassNamesOf cls (codeByteCode.folded) code
     ] ++
-    [ c ==> case oper of
+    [ case oper of
         ArrayStore _ ->
           -- When we store an item in the array, it should be a subtype of the
           -- content of the array.
-          stack 0 `requireSubtype` isArray (stack 2)
+          c ==> stack 0 `requireSubtype` isArray (stack 2)
 
         Get fa fid ->
           -- For a get value is valid the field has to exist, and the first
           -- element on the stack has to be a subclass of fields class.
-          requireField hry cls fid
-          /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
+          c ==> requireField hry cls fid
+            /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
 
         Put fa fid ->
           -- For a put value is valid the field has to exist, and the first
           -- element on the stack has to be a subclass of fields class, and
           -- the second element have to be a subtype of the type of the field
-          requireField hry cls fid
-          /\ stack 0 `requireSubtype` fid^.fieldIdType
-          /\ given (fa /= B.FldStatic)
-            (stack 1 `requireSubtype` fid^.className)
+          c ==> requireField hry cls fid
+            /\ stack 0 `requireSubtype` fid^.fieldIdType
+            /\ given (fa /= B.FldStatic)
+              (stack 1 `requireSubtype` fid^.className)
 
         Invoke a ->
           -- For the methods there are three general cases, a regular method call,
           -- a static methods call (no-object) and a dynamic call (no-class).
           methodRequirements
-          /\ and [ s `requireSubtype` t | (s, t) <- zip (state ^. tcStack) (reverse stackTypes)]
+          /\ (c ==> and [ s `requireSubtype` t | (s, t) <- zip (state ^. tcStack) (reverse stackTypes)])
           where
             (methodRequirements, stackTypes) =
               case methodInvokeTypes a of
                 Right (isStatic, m) ->
-                  ( requireMethod hry cls (AbsMethodId $ m^.asInClass)
+                  ( c ==> requireMethod hry cls (AbsMethodId $ m^.asInClass)
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
                     <> (map asTypeInfo $ m^.methodIdArgumentTypes)
                   )
-                Left m -> (true, map asTypeInfo $ m^.methodIdArgumentTypes)
+                Left (i, m) -> 
+                  ( ( c ==> requireBootstrapMethod cls (fromIntegral i) ) 
+                    /\ ( requireBootstrapMethod cls (fromIntegral i) ==> c)
+                  -- BootstrapMethods are bound to thier use without them
+                  -- they are nothing and should be removed 
+                  , map asTypeInfo $ m^.methodIdArgumentTypes
+                  )
 
         Throw ->
           -- A Throw operation requires that the first element on the stack is throwable.
-          stack 0 `requireSubtype` ("java/lang/Throwable" :: ClassName)
+          c ==> stack 0 `requireSubtype` ("java/lang/Throwable" :: ClassName)
 
         CheckCast fa ->
           -- The check cast operation requires that the first element on the stack
           -- is either a subtype of the cast or the cast is a subtype of the first
           -- element. Often only one of these are true.
-          stack 0 `requireSubtype` fa \/ fa `requireSubtype` stack 0
+          c ==> stack 0 `requireSubtype` fa \/ fa `requireSubtype` stack 0
 
         Return (Just B.LRef) ->
           -- We do require that the first element on the stack is a subtype of the return type.
-          forall (method^.methodReturnType.simpleType)
+          c ==> forall (method^.methodReturnType.simpleType)
             \mt -> stack 0 `requireSubtype` mt
 
         _ -> true
@@ -369,7 +391,7 @@ logic hry = \case
         B.InvkVirtual m -> Right (False, m)
         B.InvkStatic (B.AbsVariableMethodId _ m) -> Right (True, m)
         B.InvkInterface _ (B.AbsInterfaceMethodId m) -> Right (False, m)
-        B.InvkDynamic (B.InvokeDynamic _ m') -> Left m'
+        B.InvkDynamic (B.InvokeDynamic i m') -> Left (i, m')
 
       typeCheckStates =
         case typeCheck hry theMethodName (method^.methodAccessFlags.contains MStatic) code of
@@ -417,7 +439,7 @@ logic hry = \case
       foldl (\a b -> a >>= meet (asTypeInfo b))
       (Just TTop)
       (ti ^.._TRef.folded._JTArray)
-   
+
 unbrokenPath :: SubclassPath -> Term Fact
 unbrokenPath path =
   and [ isSubclass f t e | (f, t, e) <- subclassEdges path]
@@ -444,6 +466,9 @@ requireMethodHandle hry cls = \case
     B.MHNewInvokeSpecial rt -> rt
   B.MHInterface (B.MethodHandleInterface (B.AbsInterfaceMethodId rt)) ->
     requireMethod hry cls . AbsMethodId . view asInClass $ rt
+
+requireBootstrapMethod :: HasClassName c => c -> Int -> Term Fact
+requireBootstrapMethod c i = tt (HasBootstrapMethod (c^.className) i)
 
 requireClassNames :: (HasClassName c, HasClassNames a) => c -> a -> Term Fact
 requireClassNames c =
