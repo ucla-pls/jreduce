@@ -164,9 +164,24 @@ logic hry = \case
       -- all classes mention should exist if this class exist.
       c ==> requireClassNamesOf cls (classTypeParameters.folded) cls
 
-    , -- If the class is a enum, it needs to extend java.lang.Enum
+    , -- If the class is a enum, it needs to extend java.lang.Enum and have 
+      -- these methods and fields
       given (cls^.classAccessFlags.contains CEnum) $ c ==> 
         hasSuperClass (cls^.className) "java/lang/Enum"
+        /\ ( requireMethod hry cls . mkAbsMethodId cls 
+           $ "values" 
+           <:> MethodDescriptor [] 
+            (ReturnDescriptor . Just . JTRef . JTArray .JTRef . JTClass $ cls^.className)
+           )
+        /\ ( requireMethod hry cls . mkAbsMethodId cls 
+           $ "valueOf" 
+          <:> MethodDescriptor ["Ljava/lang/String;"] 
+            (ReturnDescriptor . Just . JTRef . JTClass $ cls^.className)
+           )
+        /\ ( requireField hry cls . mkAbsFieldId cls 
+           $ "$VALUES" 
+            <:> FieldDescriptor  (JTRef . JTArray .JTRef . JTClass $ cls^.className)
+           )
 
     , -- We also do also not reduce enclosing methods. If a class is enclosed
       -- in another class, require that to exist, and if the class is enclosed
