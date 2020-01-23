@@ -244,6 +244,8 @@ logic hry = \case
         \(decl, isAbstract, path) -> given isAbstract
           $ methodExist decl /\ unbrokenPath path ==> m
 
+    , requireClassNamesOf cls (methodDefaultAnnotation._Just) method
+
     , -- TODO: Nessary?
       -- Finally we requier that if a method is synthetic is should be
       -- removed alongside its code
@@ -314,6 +316,9 @@ logic hry = \case
 
     , -- TODO: An indepth analysis of throws of the code?
       codeIsUntuched (mkAbsMethodId cls method) ==> m
+
+    , -- Any class mentioned in this setting should extend throwable.
+      mt^.simpleType `requireSubtype` ("java/lang/Throwable" :: ClassName)
 
     -- , -- TODO: I this method extends a method it has to have it's execeptions.
     --   forall (superDeclarationPaths mt hry)
