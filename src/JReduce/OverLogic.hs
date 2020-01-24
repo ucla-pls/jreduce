@@ -150,7 +150,7 @@ describeGraphProblem isOver wf p = do
               pure $ tt n  
             else do
               -- L.warn ("Did not find " <> displayFact n)
-              pure $ false
+              pure $ true
           )
           sentence
 
@@ -162,12 +162,13 @@ describeGraphProblem isOver wf p = do
       let filename = wf </> "items.txt" 
       LazyText.appendFile filename . LazyText.toLazyText  
        $ displayText txt <> "\n" 
-         <> foldMap (\a -> 
-            "  BEF " <> displayString (show (fmap displayFact (flattenNnf . nnfFromTerm . fromTerm $ sentence))) <> "\n" 
-            <> "  AFT " <> displayString (show (fmap displayFact nnf)) <> "\n"
-            <> "  " <> case a of 
+          <> "  BEF " 
+            <> displayString (show (fmap displayFact (flattenNnf . nnfFromTerm . fromTerm $ sentence))) <> "\n" 
+          <> "  AFT " <> displayString (show (fmap displayFact nnf)) <> "\n"
+          <> foldMap (\a -> 
+            "  " <> case a of 
                  DDeps x y -> "DEP " <> displayFact x <> " ~~> " <> displayFact y
-                 DLit  (Literal b x)  -> "LIT " <> bool "! " " " b <> displayFact x
+                 DLit  (Literal b x)  -> "LIT " <> bool "! " "" b <> displayFact x
                  DFalse  -> "FLS "
             <> "\n") 
             edges
