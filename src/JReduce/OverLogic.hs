@@ -337,7 +337,8 @@ logic hry = \case
       m ==> requireClassNames cls mt
 
     , -- TODO: An indepth analysis of throws of the code?
-      codeIsUntuched (mkAbsMethodId cls method) ==> m
+      given (has (methodCode._Just) method) $
+        codeIsUntuched (mkAbsMethodId cls method) ==> m
 
     , -- Any class mentioned in this setting should extend throwable.
       m ==> mt^.simpleType `requireSubtype` ("java/lang/Throwable" :: ClassName)
