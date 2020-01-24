@@ -27,6 +27,7 @@ import qualified Data.Vector as V
 -- base
 import Data.Foldable hiding (and, or)
 import Data.Maybe
+import Data.Bool (bool)
 import Data.Monoid
 import Control.Monad
 import Control.Monad.IO.Class
@@ -52,18 +53,15 @@ import System.FilePath
 -- -- directory
 -- import System.Directory
 
--- bytestring
-import qualified Data.ByteString.Lazy as BL
-
--- aseon
-import Data.Aeson
-
 -- text
-import qualified Data.Text as Text
+-- import qualified Data.Text as Text 
+import qualified Data.Text.Lazy.IO as LazyText
+import qualified Data.Text.Lazy.Builder as LazyText
 
 -- reduce-util
 import Control.Reduce.Boolean
 import Control.Reduce.Problem
+import Control.Reduce.Reduction
 import Control.Reduce.Util.Logger as L
 
 -- unorderd-containers
@@ -116,43 +114,66 @@ describeGraphProblem isOver wf p = do
       let targets = targetClasses $ _problemInitial p
       let scope = S.fromList ( map (view className) targets)
       hry <- fetchHierachy targets
-      pure .(,scope) $ \i -> pure $ logic hry i
+      pure . (,scope) $ pure . logic hry
 
   L.phase "Precalculating the Reduction" $ do
     core <- view cfgCore
     L.info . L.displayf "Requiring %d core items." $ List.length core
 
-    ((grph, coreSet, cls, t), p3) <-
-      toLogicGraphReductionM isOver
-      (\x -> do
-         (k, t) <- keyFun x
-         let txt = serializeWith displayFact k
-             isCore = txt `HS.member` core
-         t' <- L.logtime L.DEBUG
-           ("Processing " <> displayText txt
-            <> (if isCore then " CORE" else "")) $
-           deepseq t (pure t)
+    removeables :: S.Set Fact <- S.fromList 
+      <$> mapM 
+        (fmap fst . keyFun) 
+        (toListOf (deepSubelements itemR) (_problemInitial p2))
 
-         let
-           t'' = serializeWith displayFact <$> t'
-           nnf = flattenNnf . nnfFromTerm . fromTerm $ t''
-         whenM (view cfgDumpItems) . liftIO $ do
-          appendFile (wf </> "items.txt" )
-            ( Text.unpack txt ++ "\n"
-              ++ show t'' ++ "\n"
-              ++ show nnf ++ "\n"
-              ++ show ((if isOver then overDependencies else underDependencies) nnf) ++ "\n"
-            )
+    ((grph, coreSet, closures), p3) <- 
+      toGraphReductionDeepM (handler removeables core <=< keyFun) itemR p2
+    
+    dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
+   
+    return p3
 
-         return (k, if isCore then tt k /\ t' else t')
-      ) (const True) itemR p2
+ where 
+  -- handler :: S.Set Fact -> HS.HashSet Text.Text -> (Fact, Term Fact) -> m (Fact, Bool, [(Fact, Fact)])
+  handler removeables core (key, sentence) = do
+    let txt = serializeWith displayFact key
+        isCore = txt `HS.member` core
+
+    let debuginfo = displayText txt 
+              <> (if isCore then " CORE" else "")
+
+    -- Ensure that the sentence have been evalutated
+    L.logtime L.DEBUG ("Processing " <> debuginfo) $ deepseq sentence (pure ())
+
+    let nnf = flattenNnf . nnfFromTerm . fromTerm . runIdentity  $ traverseVariables 
+          (\n -> if n `S.member` removeables
+            then
+              pure $ tt n  
+            else do
+              -- L.warn ("Did not find " <> displayFact n)
+              pure $ false
+          )
+          sentence
+
+    let edges = if isOver
+          then overDependencies nnf
+          else underDependencies nnf
 
     whenM (view cfgDumpItems) . liftIO $ do
-      BL.writeFile (wf </> "nnf.json")
-        $ encode t
+      let filename = wf </> "items.txt" 
+      LazyText.appendFile filename . LazyText.toLazyText  
+       $ displayText txt <> "\n" 
+         <> foldMap (\a -> 
+            "  BEF " <> displayString (show (fmap displayFact (flattenNnf . nnfFromTerm . fromTerm $ sentence))) <> "\n" 
+            <> "  AFT " <> displayString (show (fmap displayFact nnf)) <> "\n"
+            <> "  " <> case a of 
+                 DDeps x y -> "DEP " <> displayFact x <> " ~~> " <> displayFact y
+                 DLit  (Literal b x)  -> "LIT " <> bool "! " " " b <> displayFact x
+                 DFalse  -> "FLS "
+            <> "\n") 
+            edges
+       
 
-    dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet cls
-    return p3
+    return (key, isCore, [ (a, b) | DDeps a b <- edges ])
 
 
 logic :: Hierarchy -> Item -> (Fact, Term Fact)
@@ -318,7 +339,7 @@ logic hry = \case
       codeIsUntuched (mkAbsMethodId cls method) ==> m
 
     , -- Any class mentioned in this setting should extend throwable.
-      mt^.simpleType `requireSubtype` ("java/lang/Throwable" :: ClassName)
+      m ==> mt^.simpleType `requireSubtype` ("java/lang/Throwable" :: ClassName)
 
     -- , -- TODO: I this method extends a method it has to have it's execeptions.
     --   forall (superDeclarationPaths mt hry)
