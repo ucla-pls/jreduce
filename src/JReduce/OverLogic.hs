@@ -186,6 +186,8 @@ logic hry = \case
       -- all classes mention should exist if this class exist.
       c ==> requireClassNamesOf cls (classTypeParameters.folded) cls
 
+    , c ==> requireClassNamesOf cls (classAnnotations.folded) cls
+
     , -- If the class is a enum, it needs to extend java.lang.Enum and have 
       -- these methods and fields
       given (cls^.classAccessFlags.contains CEnum) $ c ==> 
@@ -217,6 +219,7 @@ logic hry = \case
   IField (cls, field) -> FieldExist (mkAbsFieldId cls field)
     `withLogic` \f ->
     [ f ==> requireClassNamesOf cls fieldType field
+    , f ==> requireClassNamesOf cls (fieldAnnotations.folded) field
     , -- If a field is final it has to be set. This happens either in the
       -- class initializers or in the constructors. This means we cannot stub
       -- these methods.
@@ -245,6 +248,8 @@ logic hry = \case
       m ==> requireClassNamesOf cls
       (methodTypeParameters.folded)
       method
+    
+    , m ==> requireClassNamesOf cls (methodAnnotations.folded) method
 
     , if method^.methodAccessFlags.contains MAbstract
       then
