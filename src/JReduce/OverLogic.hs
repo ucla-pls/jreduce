@@ -320,6 +320,11 @@ logic hry = \case
       given (cls^.className == ic^.innerClass) $
       classExist cls ==> i
 
+    , -- If the outer class is an this class then we can not remove this 
+      -- innerclass statement before the innerclass have been removed
+      given (Just (cls^.className) == ic^.innerOuterClass) $
+      classExist (ic^.innerClass) ==> i
+
       -- NOTE: That all requirements that a class exist also will check if
       -- the innerclass exist. The rule is that if a class refer to an innerclass
       -- it must have an innerclass entry that describes that class.
