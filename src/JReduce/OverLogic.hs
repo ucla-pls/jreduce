@@ -96,7 +96,7 @@ checkScope scope = \case
   FieldExist     f           -> fn $ f ^. className
   MethodExist    m           -> fn $ m ^. className
   IsInnerClass   cn _        -> fn $ cn
-  MethodThrows   m _         -> fn $ m ^. className
+  -- MethodThrows   m _         -> fn $ m ^. className
   HasBootstrapMethod   cn _  -> fn $ cn
   Meta                       -> True
   where fn k = k `S.member` scope
@@ -243,11 +243,13 @@ logic hry = \case
     [ -- Since we do not remove the return argument or the arguemnts we have to build
       -- their requirements here.
       m ==> requireClassNamesOf cls (methodReturnType.classNames <> methodParameters.folded.classNames) method
+      -- Require the classNames of the exceptions
+    , m ==> requireClassNamesOf cls (methodExceptions.folded) method
 
     , -- Type parameters might contain classes
       m ==> requireClassNamesOf cls
-      (methodTypeParameters.folded)
-      method
+        (methodTypeParameters.folded)
+        method
     
     , m ==> requireClassNamesOf cls (methodAnnotations.folded) method
 
@@ -334,26 +336,26 @@ logic hry = \case
 
     -- , ]
 
-  IMethodThrows ((cls, method), mt) ->
-    MethodThrows (mkAbsMethodId cls method)
-    (mt^.simpleType)
-    `withLogic` \m ->
-    [ -- A method throws statement depends on all the class it mentions.
-      m ==> requireClassNames cls mt
+  -- IMethodThrows ((cls, method), mt) ->
+  --   MethodThrows (mkAbsMethodId cls method)
+  --   (mt^.simpleType)
+  --   `withLogic` \m ->
+  --   [ -- A method throws statement depends on all the class it mentions.
+  --     m ==> requireClassNames cls mt
 
-    , -- TODO: An indepth analysis of throws of the code?
-      given (has (methodCode._Just) method) $
-        codeIsUntuched (mkAbsMethodId cls method) ==> m
+  --   , -- TODO: An indepth analysis of throws of the code?
+  --     given (has (methodCode._Just) method) $
+  --       codeIsUntuched (mkAbsMethodId cls method) ==> m
 
-    , -- Any class mentioned in this setting should extend throwable.
-      m ==> mt^.simpleType `requireSubtype` ("java/lang/Throwable" :: ClassName)
+  --   , -- Any class mentioned in this setting should extend throwable.
+  --     m ==> mt^.simpleType `requireSubtype` ("java/lang/Throwable" :: ClassName)
 
-    -- , -- TODO: I this method extends a method it has to have it's execeptions.
-    --   forall (superDeclarationPaths mt hry)
-    --     \(decl, isAbstract, path) -> given isAbstract
-    --       $ methodExist decl /\ unbrokenPath path ==> m
+  --   -- , -- TODO: I this method extends a method it has to have it's execeptions.
+  --   --   forall (superDeclarationPaths mt hry)
+  --   --     \(decl, isAbstract, path) -> given isAbstract
+  --   --       $ methodExist decl /\ unbrokenPath path ==> m
 
-    ]
+  --   ]
 
   ICode ((cls, method), code) -> CodeIsUntuched theMethodName
     `withLogic` \c ->

@@ -77,7 +77,7 @@ data Item
   | IField (Class, Field)
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
-  | IMethodThrows ((Class, Method), (Annotated ThrowsType))
+  -- | IMethodThrows ((Class, Method), (Annotated ThrowsType))
   | IBootstrapMethod (Class, (Int, BootstrapMethod))
 
 makePrisms ''Item
@@ -90,7 +90,7 @@ data Fact
   | FieldExist AbsFieldId
   | MethodExist AbsMethodId
   | IsInnerClass ClassName ClassName
-  | MethodThrows AbsMethodId ClassName
+  -- | MethodThrows AbsMethodId ClassName
   | HasBootstrapMethod ClassName Int
   | Meta
   deriving (Eq, Ord, Generic, NFData)
@@ -104,7 +104,7 @@ displayFact = \case
   FieldExist  fd        -> toBuilder fd
   MethodExist md        -> toBuilder md
   IsInnerClass cn1 cn2  -> toBuilder cn1 <> "[innerOf]" <> toBuilder cn2
-  MethodThrows m   cn   -> toBuilder m <> "[throws]" <> toBuilder cn
+  -- MethodThrows m   cn   -> toBuilder m <> "[throws]" <> toBuilder cn
   HasBootstrapMethod cn b ->
     toBuilder cn <> "[bootstrap]" <> Builder.fromString (show b)
   Meta -> "meta"
@@ -245,14 +245,14 @@ keyFun es scope hry = \case
       ]
     )
 
-  IMethodThrows ((c, m), t) ->
-    ( MethodThrows (mkAbsMethodId c m) (t ^. simpleType)
-    , concat
-      [ [makeClassExist c a]
-          ++ (a `requireSubtype` ("java/lang/Throwable" :: ClassName))
-      | a <- m ^.. methodExceptions . folded . simpleType
-      ]
-    )
+  -- IMethodThrows ((c, m), t) ->
+  --   ( MethodThrows (mkAbsMethodId c m) (t ^. simpleType)
+  --   , concat
+  --     [ [makeClassExist c a]
+  --         ++ (a `requireSubtype` ("java/lang/Throwable" :: ClassName))
+  --     | a <- m ^.. methodExceptions . folded . simpleType
+  --     ]
+  --   )
 
   IMethod (c, m) ->
     ( MethodExist mname
@@ -291,9 +291,9 @@ keyFun es scope hry = \case
   ICode ((cls, m), code) ->
     ( CodeIsUntuched (mkAbsMethodId cls m)
     , codeDependencies cls m code
-      <> [ MethodThrows (mkAbsMethodId cls m) (t ^. simpleType)
-         | t <- m ^. methodExceptions
-         ]
+      -- <> [ MethodThrows (mkAbsMethodId cls m) (t ^. simpleType)
+      --    | t <- m ^. methodExceptions
+      --    ]
     )
 
   IBootstrapMethod (cls, (i, b)) ->
@@ -530,17 +530,17 @@ itemR f' = \case
         _                    -> Nothing
       _ -> pure Nothing
 
-    _methodThrows <- (listR . payload (cls, m) . reduceAs _IMethodThrows)
-      f
-      (m ^. methodExceptions)
+    -- _methodThrows <- (listR . payload (cls, m) . reduceAs _IMethodThrows)
+    --   f
+    --   (m ^. methodExceptions)
 
     pure
       $  (case t of
            Just c  -> m & methodCode .~ Just c
            Nothing -> stub m
          )
-      &  methodExceptions
-      .~ _methodThrows
+      -- &  methodExceptions
+      -- .~ _methodThrows
 
 
 payload :: Functor f => p -> ((p, a) -> f (Maybe (p, a))) -> a -> f (Maybe a)
