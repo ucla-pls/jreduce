@@ -247,6 +247,11 @@ logic hry = \case
         (methodReturnType.classNames <> methodParameters.folded.classNames) 
         method
 
+    , -- If you are a constructor, you have to be removed completely if you can be 
+      -- removed
+      given (method^.methodIdName == "<init>") $ 
+        m ==> codeIsUntuched (mkAbsMethodId cls method)
+
       -- Require the classNames of the exceptions
     , m ==> requireClassNamesOf cls (methodExceptions.folded) method
 
