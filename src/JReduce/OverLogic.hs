@@ -207,6 +207,11 @@ logic hry = \case
             <:> FieldDescriptor  (JTRef . JTArray .JTRef . JTClass $ cls^.className)
            )
 
+    , -- All objects needs to have at least one constructor.
+      c ==> existOf classConstructors cls \m -> 
+        codeIsUntuched m
+
+
     , -- We also do also not reduce enclosing methods. If a class is enclosed
       -- in another class, require that to exist, and if the class is enclosed
       -- in a method require that to exist.
@@ -220,14 +225,10 @@ logic hry = \case
     `withLogic` \f ->
     [ f ==> requireClassNamesOf cls fieldType field
     , f ==> requireClassNamesOf cls (fieldAnnotations.folded) field
-    , -- If a field is final it has to be set. This happens either in the
-      -- class initializers or in the constructors. This means we cannot stub
-      -- these methods.
-      given (FFinal `S.member` flags)
-        if FStatic `S.member` flags
-        then forallOf classInitializers cls \m ->
-          f ==> codeIsUntuched m
-        else forallOf classConstructors cls \m ->
+    , -- If a field is final it has to be set. This means we cannot stub
+      -- class initializers, .
+      given (FFinal `S.member` flags && FStatic `S.member` flags) $
+        forallOf classInitializers cls \m ->
           f ==> codeIsUntuched m
 
     , -- TODO: Reconsider this?
@@ -242,7 +243,10 @@ logic hry = \case
     `withLogic` \m ->
     [ -- Since we do not remove the return argument or the arguemnts we have to build
       -- their requirements here.
-      m ==> requireClassNamesOf cls (methodReturnType.classNames <> methodParameters.folded.classNames) method
+      m ==> requireClassNamesOf cls 
+        (methodReturnType.classNames <> methodParameters.folded.classNames) 
+        method
+
       -- Require the classNames of the exceptions
     , m ==> requireClassNamesOf cls (methodExceptions.folded) method
 
@@ -251,7 +255,9 @@ logic hry = \case
         (methodTypeParameters.folded)
         method
     
-    , m ==> requireClassNamesOf cls (methodAnnotations.folded) method
+    , m ==> requireClassNamesOf cls 
+        (methodAnnotations.folded) 
+        method
 
     , if method^.methodAccessFlags.contains MAbstract
       then
@@ -273,7 +279,7 @@ logic hry = \case
         \(decl, isAbstract, path) -> given isAbstract
           $ methodExist decl /\ unbrokenPath path ==> m
 
-    , requireClassNamesOf cls (methodDefaultAnnotation._Just) method
+    , m ==> requireClassNamesOf cls (methodDefaultAnnotation._Just) method
 
     , -- TODO: Nessary?
       -- Finally we requier that if a method is synthetic is should be
