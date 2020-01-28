@@ -207,10 +207,6 @@ logic hry = \case
             <:> FieldDescriptor  (JTRef . JTArray .JTRef . JTClass $ cls^.className)
            )
 
-    , -- All objects needs to have at least one constructor.
-      c ==> existOf classConstructors cls \m -> 
-        codeIsUntuched m
-
 
     , -- We also do also not reduce enclosing methods. If a class is enclosed
       -- in another class, require that to exist, and if the class is enclosed
@@ -227,9 +223,15 @@ logic hry = \case
     , f ==> requireClassNamesOf cls (fieldAnnotations.folded) field
     , -- If a field is final it has to be set. This means we cannot stub
       -- class initializers, .
-      given (FFinal `S.member` flags && FStatic `S.member` flags) $
-        forallOf classInitializers cls \m ->
-          f ==> codeIsUntuched m
+      given (FFinal `S.member` flags ) $
+        if FStatic `S.member` flags
+        then
+          forallOf classInitializers cls \m ->
+            f ==> codeIsUntuched m
+        else
+          forallOf classConstructors cls \m -> 
+            codeIsUntuched m
+
 
     , -- TODO: Reconsider this?
       -- If any field is synthetic we will require it to not be removed, if the
