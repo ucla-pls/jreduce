@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE EmptyCase #-}
@@ -27,6 +28,7 @@ import qualified Data.Vector as V
 -- base
 import Data.Foldable hiding (and, or)
 import Data.Maybe
+import Data.Char (isNumber)
 import Data.Bool (bool)
 import Data.Monoid
 import Control.Monad
@@ -38,7 +40,8 @@ import Prelude hiding (fail, not, and, or)
 import Jvmhs.Data.Type
 import Jvmhs.TypeCheck
 import Jvmhs.Data.Code
-import Jvmhs
+import Jvmhs hiding (methodExist, fieldExist)
+import qualified Jvmhs 
 
 -- nfdata
 import           Control.DeepSeq
@@ -103,18 +106,21 @@ checkScope scope = \case
 
 describeGraphProblem ::
   MonadIOReader Config m
-  => Bool
+  => Bool 
+  -- ^ Keep hierarchy
+  -> Bool
+  -- ^ Is overapproximation 
   -> FilePath
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
-describeGraphProblem isOver wf p = do
+describeGraphProblem hier isOver wf p = do
   -- describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
   let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
   (keyFun, _) <- L.phase "Initializing key function" $ do
       let targets = targetClasses $ _problemInitial p
       let scope = S.fromList ( map (view className) targets)
       hry <- fetchHierachy targets
-      pure . (,scope) $ pure . logic hry
+      pure . (,scope) $ pure . logic (LogicConfig { keepHierarchy = hier }) hry
 
   L.phase "Precalculating the Reduction" $ do
     core <- view cfgCore
@@ -177,8 +183,12 @@ describeGraphProblem isOver wf p = do
     return (key, isCore, [ (a, b) | DDeps a b <- edges ])
 
 
-logic :: Hierarchy -> Item -> (Fact, Term Fact)
-logic hry = \case
+data LogicConfig = LogicConfig
+  { keepHierarchy :: Bool
+  }
+
+logic :: LogicConfig -> Hierarchy -> Item -> (Fact, Term Fact)
+logic LogicConfig{..} hry = \case
 
   IContent (ClassFile cls) -> ClassExist (cls ^. className)
     `withLogic` \c ->
@@ -300,6 +310,8 @@ logic hry = \case
     [ -- An Implements only depends on the interface that it implements, and
       -- its type parameters.
       i ==> requireClassNames cls ct
+    , -- Given that we should keep the extends
+      given keepHierarchy $ i ==> requireClassName cls cls
     ]
 
   ISuperClass (cls, ct) -> HasSuperClass (cls^.className) (ct^.simpleType)
@@ -307,9 +319,14 @@ logic hry = \case
     [ -- An Implements only depends on the class of the supertype and its type
       -- parameters.
       s ==> requireClassNames cls ct
-      -- We also require that one of the constructors to still exists
-      -- TODO: Think more about this.
-    , s ==> existOf classConstructors cls codeIsUntuched
+      
+    , -- In case the superclass have no empty init method we require at least
+      -- one of it's constructors to exist.
+      given (isNothing $ Jvmhs.methodExist (mkAbsMethodId (ct^.simpleType) ("<init>:()V" :: MethodId)) hry) 
+        (s ==> existOf classConstructors cls codeIsUntuched)
+
+    , -- Given that we should keep the extends
+      given keepHierarchy $ s ==> requireClassName cls cls
     ]
 
   IInnerClass (cls, ic) -> IsInnerClass (cls^.className) (ic^.innerClass)
@@ -416,7 +433,11 @@ logic hry = \case
                 Right (isStatic, m) ->
                   ( let mid = AbsMethodId $ m^.asInClass
                     in (c ==> requireMethod hry cls mid)
-                        /\ given (Text.isPrefixOf "access$" (m^.methodIdName))
+                        /\ given (or [ Text.isPrefixOf "access$" (m^.methodIdName)
+                                     , Text.all isNumber . last . Text.splitOn "$" 
+                                      $ (mid^.className.fullyQualifiedName)
+                                     ]
+                                 ) 
                                  (methodExist mid ==> c) 
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
                     <> (map asTypeInfo $ m^.methodIdArgumentTypes)

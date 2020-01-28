@@ -109,8 +109,8 @@ run strat = do
         JReduce.OverDeep.describeProblem selection wf
       OverClasses ->
         JReduce.OverClasses.describeProblem wf
-      OverLogicApprox bool ->
-        JReduce.OverLogic.describeGraphProblem bool wf
+      OverLogicApprox ext bool ->
+        JReduce.OverLogic.describeGraphProblem ext bool wf
       OverLogic -> error "Not supported, yet!"
 
     (failure, result) <- runReductionProblem (wf </> "reduction")
@@ -145,7 +145,7 @@ run strat = do
 data Strategy
   = OverClasses
   | OverDeep EdgeSelection
-  | OverLogicApprox Bool
+  | OverLogicApprox Bool Bool
   | OverLogic
   deriving (Ord, Eq, Show)
 
@@ -168,9 +168,11 @@ strategyParser =
         "classes":[] -> Just OverClasses
         "deep":rest -> Just $ OverDeep (foldMap toEdgeSelection rest)
         ["logic", "under"] ->
-          Just $ OverLogicApprox False
+          Just $ OverLogicApprox False False
         ["logic", "over"] ->
-          Just $ OverLogicApprox True
+          Just $ OverLogicApprox False True
+        ["logic", "extends", "over"] ->
+          Just $ OverLogicApprox True True
         ["logic"] ->
           Just $ OverLogic
         _ -> Nothing
