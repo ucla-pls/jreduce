@@ -230,7 +230,7 @@ logic hry = \case
             f ==> codeIsUntuched m
         else
           forallOf classConstructors cls \m -> 
-            codeIsUntuched m
+            f ==> codeIsUntuched m
 
 
     , -- TODO: Reconsider this?
@@ -289,7 +289,7 @@ logic hry = \case
     , m ==> requireClassNamesOf cls (methodDefaultAnnotation._Just) method
 
     , -- TODO: Nessary?
-      -- Finally we requier that if a method is synthetic is should be
+      -- Finally we require that if a method is synthetic is should be
       -- removed alongside its code
       given (method^.methodAccessFlags.contains MSynthetic)
       $ m ==> codeIsUntuched (mkAbsMethodId cls method)
