@@ -54,7 +54,7 @@ import System.FilePath
 -- import System.Directory
 
 -- text
--- import qualified Data.Text as Text 
+import qualified Data.Text as Text 
 import qualified Data.Text.Lazy.IO as LazyText
 import qualified Data.Text.Lazy.Builder as LazyText
 
@@ -414,7 +414,10 @@ logic hry = \case
             (methodRequirements, stackTypes) =
               case methodInvokeTypes a of
                 Right (isStatic, m) ->
-                  ( c ==> requireMethod hry cls (AbsMethodId $ m^.asInClass)
+                  ( let mid = AbsMethodId $ m^.asInClass
+                    in (c ==> requireMethod hry cls mid)
+                        /\ given (Text.isPrefixOf "access$" (m^.methodIdName))
+                                 (methodExist mid ==> c) 
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
                     <> (map asTypeInfo $ m^.methodIdArgumentTypes)
                   )
