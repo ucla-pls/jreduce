@@ -311,7 +311,7 @@ logic LogicConfig{..} hry = \case
       -- its type parameters.
       i ==> requireClassNames cls ct
     , -- Given that we should keep the extends
-      given keepHierarchy $ i ==> requireClassName cls cls
+      given keepHierarchy $ classExist cls ==> i
     ]
 
   ISuperClass (cls, ct) -> HasSuperClass (cls^.className) (ct^.simpleType)
@@ -326,7 +326,7 @@ logic LogicConfig{..} hry = \case
         (s ==> existOf classConstructors cls codeIsUntuched)
 
     , -- Given that we should keep the extends
-      given keepHierarchy $ s ==> requireClassName cls cls
+      given keepHierarchy $ classExist cls ==> s
     ]
 
   IInnerClass (cls, ic) -> IsInnerClass (cls^.className) (ic^.innerClass)
@@ -433,10 +433,18 @@ logic LogicConfig{..} hry = \case
                 Right (isStatic, m) ->
                   ( let mid = AbsMethodId $ m^.asInClass
                     in (c ==> requireMethod hry cls mid)
-                        /\ given (or [ Text.isPrefixOf "access$" (m^.methodIdName)
-                                     , Text.all isNumber . last . Text.splitOn "$" 
-                                      $ (mid^.className.fullyQualifiedName)
-                                     ]
+                        /\ given 
+                        (or 
+                          [ -- If it is an access$ method it depends on the existance of
+                            -- this code to exit
+                            Text.isPrefixOf "access$" (m^.methodIdName)
+                          , -- If the class is an annoumus class it depends on the existence
+                            -- of the code that defines it, execept if it
+                            -- call itself.
+                            ( Text.all isNumber . last . Text.splitOn "$" 
+                            $ mid^.className.fullyQualifiedName
+                            ) /\ mid^.className /= cls ^.className
+                          ]
                                  ) 
                                  (methodExist mid ==> c) 
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
