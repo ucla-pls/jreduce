@@ -322,10 +322,11 @@ logic LogicConfig{..} hry = \case
       
     , -- In case the superclass have no empty init method we require at least
       -- one of it's constructors to exist.
+      let mid = mkAbsMethodId (ct^.simpleType) ("<init>:()V" :: MethodId)
+      in 
       s ==> 
-        let mid = mkAbsMethodId (ct^.simpleType) ("<init>:()V" :: MethodId)
-        in given (isNothing $ Jvmhs.methodExist mid hry) (methodExist mid)
-            \/ existOf classConstructors cls codeIsUntuched
+        (if isJust (Jvmhs.methodExist mid hry) then methodExist mid else false) 
+          \/ existOf classConstructors cls codeIsUntuched
 
     , -- Given that we should keep the extends
       given keepHierarchy $ classExist cls ==> s
