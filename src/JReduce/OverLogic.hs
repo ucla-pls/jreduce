@@ -433,9 +433,9 @@ logic LogicConfig{..} hry = \case
           where
             (methodRequirements, stackTypes) =
               case methodInvokeTypes a of
-                Right (isStatic, m) ->
+                Right (isSpecial, isStatic, m) ->
                   ( let mid = AbsMethodId $ m^.asInClass
-                    in (c ==> requireMethod hry cls mid)
+                    in (c ==> if isSpecial then methodExist mid else requireMethod hry cls mid)
                         /\ given 
                         (or 
                           [ -- If it is an access$ method it depends on the existance of
@@ -494,10 +494,10 @@ logic LogicConfig{..} hry = \case
         mkAbsMethodId cls method
 
       methodInvokeTypes = \case
-        B.InvkSpecial (B.AbsVariableMethodId _ m) -> Right (False, m)
-        B.InvkVirtual m -> Right (False, m)
-        B.InvkStatic (B.AbsVariableMethodId _ m) -> Right (True, m)
-        B.InvkInterface _ (B.AbsInterfaceMethodId m) -> Right (False, m)
+        B.InvkSpecial (B.AbsVariableMethodId _ m) -> Right (True, False, m)
+        B.InvkVirtual m -> Right (False, False, m)
+        B.InvkStatic (B.AbsVariableMethodId _ m) -> Right (False, True, m)
+        B.InvkInterface _ (B.AbsInterfaceMethodId m) -> Right (False, False, m)
         B.InvkDynamic (B.InvokeDynamic i m') -> Left (i, m')
 
       typeCheckStates =
