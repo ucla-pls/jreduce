@@ -41,6 +41,7 @@ import Jvmhs.Data.Type
 import Jvmhs.TypeCheck
 import Jvmhs.Data.Code
 import Jvmhs hiding (methodExist, fieldExist)
+import qualified Jvmhs 
 
 -- nfdata
 import           Control.DeepSeq
@@ -321,8 +322,10 @@ logic LogicConfig{..} hry = \case
       
     , -- In case the superclass have no empty init method we require at least
       -- one of it's constructors to exist.
-      s ==> methodExist (mkAbsMethodId (ct^.simpleType) ("<init>:()V" :: MethodId)) 
-        \/ existOf classConstructors cls codeIsUntuched
+      s ==> 
+        let mid = mkAbsMethodId (ct^.simpleType) ("<init>:()V" :: MethodId)
+        in given (isNothing $ Jvmhs.methodExist mid hry) (methodExist mid)
+            \/ existOf classConstructors cls codeIsUntuched
 
     , -- Given that we should keep the extends
       given keepHierarchy $ classExist cls ==> s
