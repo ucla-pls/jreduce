@@ -223,7 +223,7 @@ logic LogicConfig{..} hry = \case
       -- in a method require that to exist.
       forallOf (classEnclosingMethod._Just) cls
       \(cn, mMId) -> c ==> case mMId of
-        Just m -> methodExist (mkAbsMethodId cn m) /\ isInnerClassOf cls cn
+        Just m -> codeIsUntuched (mkAbsMethodId cn m) /\ isInnerClassOf cls cn
         Nothing -> requireClassName cls cn
     ]
 
