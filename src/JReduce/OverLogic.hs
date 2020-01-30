@@ -97,6 +97,7 @@ checkScope scope = \case
   HasSuperClass  cn _        -> fn $ cn
   HasInterface   cn _        -> fn $ cn
   FieldExist     f           -> fn $ f ^. className
+  FieldIsFinal   f           -> fn $ f ^. className
   MethodExist    m           -> fn $ m ^. className
   IsInnerClass   cn _        -> fn $ cn
   -- MethodThrows   m _         -> fn $ m ^. className
@@ -231,18 +232,6 @@ logic LogicConfig{..} hry = \case
     `withLogic` \f ->
     [ f ==> requireClassNamesOf cls fieldType field
     , f ==> requireClassNamesOf cls (fieldAnnotations.folded) field
-    , -- If a field is final it has to be set. This means we cannot stub
-      -- class initializers, .
-      given (FFinal `S.member` flags ) $
-        if FStatic `S.member` flags
-        then
-          forallOf classInitializers cls \m ->
-            f ==> codeIsUntuched m
-        else
-          forallOf classConstructors cls \m -> 
-            f ==> codeIsUntuched m
-
-
     , -- TODO: Reconsider this?
       -- If any field is synthetic we will require it to not be removed, if the
       -- class exist. This helps with many problems.
@@ -250,6 +239,19 @@ logic LogicConfig{..} hry = \case
         classExist cls ==> f
     ]
     where flags = field^.fieldAccessFlags
+  
+  IFieldFinal (cls, field) -> FieldIsFinal (mkAbsFieldId cls field)
+    `withLogic` \f ->
+    [ -- If a field is final it has to be set. This means we cannot stub
+      -- class initializers and class constructors.
+      if field^.fieldAccessFlags.contains FStatic
+      then
+        forallOf classInitializers cls \m ->
+          f ==> codeIsUntuched m
+      else
+        forallOf classConstructors cls \m -> 
+          f ==> codeIsUntuched m
+    ]
 
   IMethod (cls, method) -> MethodExist (mkAbsMethodId cls method)
     `withLogic` \m ->

@@ -75,6 +75,7 @@ data Item
   | ISuperClass (Class, (Annotated ClassType))
   | IImplements (Class, (Annotated ClassType))
   | IField (Class, Field)
+  | IFieldFinal (Class, Field)
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
   -- | IMethodThrows ((Class, Method), (Annotated ThrowsType))
@@ -88,6 +89,7 @@ data Fact
   | HasSuperClass ClassName ClassName
   | HasInterface ClassName ClassName
   | FieldExist AbsFieldId
+  | FieldIsFinal AbsFieldId
   | MethodExist AbsMethodId
   | IsInnerClass ClassName ClassName
   -- | MethodThrows AbsMethodId ClassName
@@ -102,6 +104,7 @@ displayFact = \case
   HasSuperClass cn1 cn2 -> toBuilder cn1 <> "<S]" <> toBuilder cn2
   HasInterface  cn1 cn2 -> toBuilder cn1 <> "<I]" <> toBuilder cn2
   FieldExist  fd        -> toBuilder fd
+  FieldIsFinal  fd      -> toBuilder fd <> "[final]"
   MethodExist md        -> toBuilder md
   IsInnerClass cn1 cn2  -> toBuilder cn1 <> "[innerOf]" <> toBuilder cn2
   -- MethodThrows m   cn   -> toBuilder m <> "[throws]" <> toBuilder cn
@@ -198,6 +201,11 @@ keyFun es scope hry = \case
         , f ^. fieldAccessFlags . contains FSynthetic
         ]
       ]
+    )
+  
+  IFieldFinal (cls, field) ->
+    ( FieldIsFinal $ mkAbsFieldId cls field
+    , []
     )
 
   IField (cls, field) ->
@@ -470,6 +478,7 @@ itemR f' = \case
   ITarget  t      -> fmap ITarget <$> targetR f' t
   IContent c      -> fmap IContent <$> contentR f' c
   IMethod  (c, m) -> fmap (IMethod . (c, )) <$> (part $ methodR c) f' m
+  IField   (c, m) -> fmap (IField . (c, ))  <$> (part $ fieldR c) f' m
   a               -> pure (Just a)
  where
   contentR :: PartialReduction Content Item
@@ -505,22 +514,26 @@ itemR f' = \case
       f
       (c ^. classInterfaces)
 
-    bootstrapMethods <- (iso IntMap.toAscList IntMap.fromAscList . listR . payload c . reduceAs _IBootstrapMethod) f (c ^.classBootstrapMethods)
+    bootstrapMethods <- 
+      (iso IntMap.toAscList IntMap.fromAscList 
+      . listR . payload c . reduceAs _IBootstrapMethod) 
+      f (c ^.classBootstrapMethods)
  
     pure
-      $  c
-      &  classSuper
-      .~ _super
-      &  classFields
-      .~ fields
-      &  classMethods
-      .~ methods
-      &  classInnerClasses
-      .~ innerClasses
-      &  classInterfaces
-      .~ _interfaces
-      &  classBootstrapMethods
-      .~ bootstrapMethods
+      $  c &  classSuper .~ _super
+      &  classFields .~ fields 
+      &  classMethods .~ methods 
+      &  classInnerClasses .~ innerClasses
+      &  classInterfaces .~ _interfaces 
+      &  classBootstrapMethods .~ bootstrapMethods
+  
+  fieldR :: Class -> Reduction Field Item
+  fieldR cls fn f = do
+    if f ^. fieldAccessFlags . contains FFinal
+    then fn (IFieldFinal (cls, f)) <&> \case
+      Just (IFieldFinal _) -> f
+      _ -> f & fieldAccessFlags . at FFinal .~ Nothing
+    else pure f
 
   methodR :: Class -> Reduction Method Item
   methodR cls f m = do
