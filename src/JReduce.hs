@@ -89,7 +89,6 @@ instance Metric DirTreeMetric where
   displayMetric (DirTreeMetric a) =
     display (a `div` 1000) <> displayString " Kb"
 
-
 run :: Strategy -> ReaderT Config IO ()
 run strat = do
   Config {..} <- ask

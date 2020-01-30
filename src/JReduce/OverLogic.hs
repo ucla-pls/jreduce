@@ -450,12 +450,12 @@ logic LogicConfig{..} hry = \case
                           , -- If the class is an annoumus class it depends on the existence
                             -- of the code that defines it, execept if it
                             -- call itself.
-                            ( Text.all isNumber . last . Text.splitOn "$" 
+                            ( isNumber . Text.head . last . Text.splitOn "$" 
                             $ mid^.className.fullyQualifiedName
                             ) /\ mid^.className /= cls ^.className
                           ]
-                                 ) 
-                                 (methodExist mid ==> c) 
+                        ) 
+                        (methodExist mid ==> c) 
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
                     <> (map asTypeInfo $ m^.methodIdArgumentTypes)
                   )

@@ -220,7 +220,6 @@ dumpGraphInfo wf grph coreSet cls = do
               GraphField
           )
 
-
 targetClasses :: Target -> [Class]
 targetClasses = toListOf (folded . go)
  where
@@ -246,11 +245,12 @@ deepenTarget :: DirTree BL.ByteString -> IO Target
 deepenTarget = imapM (readTargetFile . fileKeyToPath) where
   readTargetFile :: FilePath -> BL.ByteString -> IO Content
   readTargetFile fp bst = case asClassName fp of
-    Just _ -> return $ ClassFile
-      (either error id $ do
+    Just _ -> return . ClassFile
+      . removeOverrideAnnotations
+      . either error id $ do
         cf <- first show (readClassFile' True bst)
         first unlines $ fromClassFile cf
-      )
+      
     Nothing
       | isJar fp -> handle (\(SomeException _) -> return $ MetaData bst) $ do
         d1 <-
@@ -262,6 +262,12 @@ deepenTarget = imapM (readTargetFile . fileKeyToPath) where
         d2 <- imapM (readTargetFile . fileKeyToPath) d1
         return . Jar $ d2 ^?! _Directory
       | otherwise -> return $ MetaData bst
+
+  -- TODO: Maybe model this instead
+  removeOverrideAnnotations = 
+    classMethods . traversed . methodAnnotations %~ 
+    filter (notElemOf annotationType "java/lang/Override")
+      
 
 undeepenTarget :: Target -> DirTree BL.ByteString
 undeepenTarget = fmap writeTargetFile where
