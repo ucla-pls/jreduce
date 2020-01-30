@@ -237,6 +237,11 @@ logic LogicConfig{..} hry = \case
       -- class exist. This helps with many problems.
       given (FSynthetic `S.member` flags) do
         classExist cls ==> f
+    , -- If class is an interface and the feild is static keep the 
+      -- classInitializers
+      given (cls^.classAccessFlags .contains CAbstract && field^.fieldAccessFlags.contains FStatic) do 
+        forallOf classInitializers cls \m ->
+          f ==> codeIsUntuched m
     ]
     where flags = field^.fieldAccessFlags
   
