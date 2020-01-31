@@ -236,7 +236,12 @@ logic LogicConfig{..} hry = \case
       -- If any field is synthetic we will require it to not be removed, if the
       -- class exist. This helps with many problems.
       given (FSynthetic `S.member` flags) do
-        classExist cls ==> f
+        classExist cls ==> f 
+
+    , -- If a field is synthetic do not remove any final flags.
+      given (FSynthetic `S.member` flags /\ FFinal `S.member` flags) do
+        f ==> tt (FieldIsFinal (mkAbsFieldId cls field))
+
     , -- If class is an interface and the feild is static keep the 
       -- classInitializers
       given (cls^.classAccessFlags .contains CAbstract && field^.fieldAccessFlags.contains FStatic) do 
