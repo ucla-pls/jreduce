@@ -238,10 +238,6 @@ logic LogicConfig{..} hry = \case
       given (FSynthetic `S.member` flags) do
         classExist cls ==> f 
 
-    , -- If a field is synthetic do not remove any final flags.
-      given (FSynthetic `S.member` flags /\ FFinal `S.member` flags) do
-        f ==> tt (FieldIsFinal (mkAbsFieldId cls field))
-
     , -- If class is an interface and the feild is static keep the 
       -- classInitializers
       given (cls^.classAccessFlags .contains CAbstract && field^.fieldAccessFlags.contains FStatic) do 
@@ -254,14 +250,20 @@ logic LogicConfig{..} hry = \case
     `withLogic` \f ->
     [ -- If a field is final it has to be set. This means we cannot stub
       -- class initializers and class constructors.
-      if field^.fieldAccessFlags.contains FStatic
+      if FStatic `S.member` flags
       then
-        forallOf classInitializers cls \m ->
+        forallOf classInitializers cls \m -> 
           f ==> codeIsUntuched m
       else
         forallOf classConstructors cls \m -> 
           f ==> codeIsUntuched m
+    , -- If a field is synthetic or static do not remove any final flags.
+      -- final static fields are treated differently than other fields, and 
+      -- are more like constants.
+      given (FSynthetic `S.member` flags  \/ FStatic `S.member` flags) $
+        fieldExist (mkAbsFieldId cls field) ==> f
     ]
+    where flags = field^.fieldAccessFlags
 
   IMethod (cls, method) -> MethodExist (mkAbsMethodId cls method)
     `withLogic` \m ->
