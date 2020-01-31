@@ -1,7 +1,11 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -34,6 +38,7 @@ import Data.Monoid
 import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.List as List
+import           GHC.Generics                   ( Generic )
 import Prelude hiding (fail, not, and, or)
 
 -- jvmhs
@@ -42,6 +47,9 @@ import Jvmhs.TypeCheck
 import Jvmhs.Data.Code
 import Jvmhs hiding (methodExist, fieldExist)
 import qualified Jvmhs 
+
+-- containers
+import qualified Data.IntMap.Strict            as IntMap
 
 -- nfdata
 import           Control.DeepSeq
@@ -53,13 +61,11 @@ import Language.JVM.ByteCode (ByteCodeOpr (..))
 -- filepath
 import System.FilePath
 
--- -- directory
--- import System.Directory
-
 -- text
 import qualified Data.Text as Text 
 import qualified Data.Text.Lazy.IO as LazyText
 import qualified Data.Text.Lazy.Builder as LazyText
+import qualified Data.Text.Lazy.Builder        as Builder
 
 -- reduce-util
 import Control.Reduce.Boolean
@@ -73,11 +79,51 @@ import qualified Data.HashSet               as HS
 -- jreduce
 import JReduce.Target
 import JReduce.Config
-import JReduce.OverDeep ( Item (..), Fact (..)
-                        , classInitializers, classConstructors
-                        , itemR, displayFact
-                        , _ITarget
-                        )
+
+
+data Item
+  = IContent Content
+  | ICode ((Class, Method), Code)
+  | ITarget Target
+  | ISuperClass (Class, (Annotated ClassType))
+  | IImplements (Class, (Annotated ClassType))
+  | IField (Class, Field)
+  | IFieldFinal (Class, Field)
+  | IMethod (Class, Method)
+  | IInnerClass (Class, InnerClass)
+  -- | IMethodThrows ((Class, Method), (Annotated ThrowsType))
+  | IBootstrapMethod (Class, (Int, BootstrapMethod))
+
+makePrisms ''Item
+
+data Fact
+  = ClassExist ClassName
+  | CodeIsUntuched AbsMethodId
+  | HasSuperClass ClassName ClassName
+  | HasInterface ClassName ClassName
+  | FieldExist AbsFieldId
+  | FieldIsFinal AbsFieldId
+  | MethodExist AbsMethodId
+  | IsInnerClass ClassName ClassName
+  -- | MethodThrows AbsMethodId ClassName
+  | HasBootstrapMethod ClassName Int
+  | Meta
+  deriving (Eq, Ord, Generic, NFData)
+
+displayFact :: Fact -> Builder.Builder
+displayFact = \case
+  ClassExist     cn     -> toBuilder cn
+  CodeIsUntuched md     -> toBuilder md <> "!code"
+  HasSuperClass cn1 cn2 -> toBuilder cn1 <> "<S]" <> toBuilder cn2
+  HasInterface  cn1 cn2 -> toBuilder cn1 <> "<I]" <> toBuilder cn2
+  FieldExist  fd        -> toBuilder fd
+  FieldIsFinal  fd      -> toBuilder fd <> "[final]"
+  MethodExist md        -> toBuilder md
+  IsInnerClass cn1 cn2  -> toBuilder cn1 <> "[innerOf]" <> toBuilder cn2
+  -- MethodThrows m   cn   -> toBuilder m <> "[throws]" <> toBuilder cn
+  HasBootstrapMethod cn b ->
+    toBuilder cn <> "[bootstrap]" <> Builder.fromString (show b)
+  Meta -> "meta"
 
 requireClassNamesOf ::
   (HasClassName c, HasClassNames a)
@@ -104,6 +150,88 @@ checkScope scope = \case
   HasBootstrapMethod   cn _  -> fn $ cn
   Meta                       -> True
   where fn k = k `S.member` scope
+
+itemR :: PartialReduction Item Item
+itemR f' = \case
+  ITarget  t      -> fmap ITarget <$> targetR f' t
+  IContent c      -> fmap IContent <$> contentR f' c
+  IMethod  (c, m) -> fmap (IMethod . (c, )) <$> (part $ methodR c) f' m
+  IField   (c, m) -> fmap (IField . (c, ))  <$> (part $ fieldR c) f' m
+  a               -> pure (Just a)
+ where
+  contentR :: PartialReduction Content Item
+  contentR f = \case
+    ClassFile c -> fmap ClassFile <$> (part classR) f c
+    Jar       c -> fmap Jar <$> (deepDirForestR . reduceAs _IContent) f c
+    a           -> pure $ Just a
+
+  targetR :: PartialReduction Target Item
+  targetR = deepDirTreeR . reduceAs _IContent
+
+  classR :: Reduction Class Item
+  classR f c = do
+    _super <- case c ^. classSuper of
+      Just a
+        | a ^. annotatedContent . to classNameFromType == "java/lang/Object" -> pure
+        $ Just a
+        | otherwise -> (payload c . reduceAs _ISuperClass) f a <&> \case
+          Just a' -> Just a'
+          Nothing ->
+            Just (withNoAnnotation (classTypeFromName "java/lang/Object"))
+      Nothing -> pure $ Nothing
+
+    fields <- (listR . payload c . reduceAs _IField) f (c ^. classFields)
+
+    methods <- (listR . payload c . reduceAs _IMethod) f (c ^. classMethods)
+
+    innerClasses <- (listR . payload c . reduceAs _IInnerClass)
+      f
+      (c ^. classInnerClasses)
+
+    _interfaces <- (listR . payload c . reduceAs _IImplements)
+      f
+      (c ^. classInterfaces)
+
+    bootstrapMethods <- 
+      (iso IntMap.toAscList IntMap.fromAscList 
+      . listR . payload c . reduceAs _IBootstrapMethod) 
+      f (c ^.classBootstrapMethods)
+ 
+    pure
+      $  c &  classSuper .~ _super
+      &  classFields .~ fields 
+      &  classMethods .~ methods 
+      &  classInnerClasses .~ innerClasses
+      &  classInterfaces .~ _interfaces 
+      &  classBootstrapMethods .~ bootstrapMethods
+  
+  fieldR :: Class -> Reduction Field Item
+  fieldR cls fn f = do
+    if f ^. fieldAccessFlags . contains FFinal
+    then fn (IFieldFinal (cls, f)) <&> \case
+      Just (IFieldFinal _) -> f
+      _ -> f & fieldAccessFlags . at FFinal .~ Nothing
+    else pure f
+
+  methodR :: Class -> Reduction Method Item
+  methodR cls f m = do
+    t <- case m ^. methodCode of
+      Just c -> f (ICode ((cls, m), c)) <&> \case
+        Just (ICode (_, c')) -> Just c'
+        _                    -> Nothing
+      _ -> pure Nothing
+
+    -- _methodThrows <- (listR . payload (cls, m) . reduceAs _IMethodThrows)
+    --   f
+    --   (m ^. methodExceptions)
+
+    pure
+      $  (case t of
+           Just c  -> m & methodCode .~ Just c
+           Nothing -> stub m
+         )
+      -- &  methodExceptions
+      -- .~ _methodThrows
 
 describeGraphProblem ::
   MonadIOReader Config m
@@ -605,7 +733,6 @@ requireClassName :: (HasClassName c, HasClassName a) => c -> a -> Term Fact
 requireClassName oc ic =
   classExist ic /\ isInnerClassOf oc ic
 
-
 classExist :: HasClassName a =>  a -> Term Fact
 classExist (view className -> cn) =
   tt (ClassExist cn)
@@ -643,3 +770,16 @@ withLogic f fn = (f, and (fn (tt f)))
 
 whenM :: Monad m => (m Bool) -> m () -> m ()
 whenM mb m = mb >>= \b -> when b m
+
+classConstructors :: Fold Class AbsMethodId
+classConstructors = classAbsMethodIds . filtered (elemOf methodIdName "<init>")
+
+classInitializers :: Fold Class AbsMethodId
+classInitializers =
+  classAbsMethodIds . filtered (elemOf methodIdName "<clinit>")
+
+payload :: Functor f => p -> ((p, a) -> f (Maybe (p, a))) -> a -> f (Maybe a)
+payload p fn a = fmap snd <$> fn (p, a)
+
+methodIsAbstract :: Method -> Bool
+methodIsAbstract = view (methodAccessFlags . contains MAbstract)
