@@ -56,11 +56,8 @@ import           GHC.IO.Encoding (setLocaleEncoding, utf8)
 -- jreduce
 import JReduce.Target
 import JReduce.Config
-import qualified JReduce.OverDeep
-import qualified JReduce.OverLogic
-import JReduce.OverDeep (EdgeSelection (..))
-import qualified JReduce.OverClasses
--- import qualified JReduce.OverStubs
+import qualified JReduce.Logic
+import qualified JReduce.Classes
 
 main :: IO ()
 main = do
@@ -104,12 +101,10 @@ run strat = do
     p2 <- targetProblem $ p1
 
     p3 <- p2 & case strat of
-      OverDeep selection ->
-        JReduce.OverDeep.describeProblem selection wf
       OverClasses ->
-        JReduce.OverClasses.describeProblem wf
+        JReduce.Classes.describeProblem wf
       OverLogicApprox ext bool ->
-        JReduce.OverLogic.describeGraphProblem ext bool wf
+        JReduce.Logic.describeGraphProblem ext bool wf
       OverLogic -> error "Not supported, yet!"
 
     (failure, result) <- runReductionProblem (wf </> "reduction")
@@ -143,7 +138,6 @@ run strat = do
 
 data Strategy
   = OverClasses
-  | OverDeep EdgeSelection
   | OverLogicApprox Bool Bool
   | OverLogic
   deriving (Ord, Eq, Show)
@@ -165,7 +159,6 @@ strategyParser =
     strategyReader = maybeReader $ \s ->
       case Text.split (=='+') . Text.toLower . Text.pack $ s of
         "classes":[] -> Just OverClasses
-        "deep":rest -> Just $ OverDeep (foldMap toEdgeSelection rest)
         ["logic", "under"] ->
           Just $ OverLogicApprox False False
         ["logic", "over"] ->
@@ -175,10 +168,3 @@ strategyParser =
         ["logic"] ->
           Just $ OverLogic
         _ -> Nothing
-
-      where
-        toEdgeSelection = \case
-          "m2m" ->  mempty { edgeSelectMethodsToMethods = True }
-          "i2m" -> mempty { edgeSelectInterfacesToMethods = True }
-          "nostub" -> mempty { edgeSelectMethodsToCode = True }
-          _ -> mempty

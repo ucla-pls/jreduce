@@ -16,7 +16,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 
-module JReduce.OverLogic where
+module JReduce.Logic where
 
 -- lens
 import Control.Lens hiding (andOf, orOf, (<.>))

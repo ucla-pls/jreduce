@@ -5,7 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
-module JReduce.OverClasses where
+module JReduce.Classes where
 
 -- lens
 import Control.Lens
