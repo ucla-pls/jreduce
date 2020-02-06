@@ -44,6 +44,7 @@ import           Jvmhs
 data DumpConfig = DumpConfig
   { _cfgDumpGraph        :: !Bool
   , _cfgDumpClosures     :: !Bool
+  , _cfgDumpLogic        :: !Bool
   , _cfgDumpCore         :: !Bool
   , _cfgDumpItems        :: !Bool
   } deriving (Show)
@@ -145,15 +146,19 @@ parseDumpConfig = do
   _dumpItems <- switch
     $ long "dump-items" <> hidden
     <> help "dump item terms to the workfolder."
+  
+  _dumpLogic <- switch
+    $ long "dump-logic" <> hidden
+    <> help "dump the logical statement to the workfolder."
 
   return $ DumpConfig
     { _cfgDumpGraph    = _dump || _dumpGraph
     , _cfgDumpClosures = _dump || _dumpClosures
     , _cfgDumpCore     = _dump || _dumpCore
     , _cfgDumpItems    = _dump || _dumpItems
+    , _cfgDumpLogic    = _dump || _dumpLogic
     }
      
-
 configParser :: Parser (IO Config)
 configParser = do
   _cfgTarget <-

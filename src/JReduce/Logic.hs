@@ -51,6 +51,12 @@ import qualified Jvmhs
 -- containers
 import qualified Data.IntMap.Strict            as IntMap
 
+-- bytestring
+import qualified Data.ByteString.Lazy as BL
+
+-- aeson
+import Data.Aeson (encode)
+
 -- nfdata
 import           Control.DeepSeq
 
@@ -292,6 +298,10 @@ describeGraphProblem hier isOver wf p = do
     let edges = if isOver
           then overDependencies nnf
           else underDependencies nnf
+    
+    whenM (view cfgDumpLogic) . liftIO $ do
+      let filename = wf </> "nnf.json" 
+      BL.appendFile filename (encode (fmap (Builder.toLazyText . displayFact) nnf) <> "\n")
 
     whenM (view cfgDumpItems) . liftIO $ do
       let filename = wf </> "items.txt" 
