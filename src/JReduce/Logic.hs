@@ -251,25 +251,34 @@ describeGraphProblem ::
 describeGraphProblem hier isOver wf p = do
   -- describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
   let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
-  (keyFun, _) <- L.phase "Initializing key function" $ do
+  (keyFun :: Item -> (Fact, Term Fact), _) <- L.phase "Initializing key function" $ do
       let targets = targetClasses $ _problemInitial p
       let scope = S.fromList ( map (view className) targets)
       hry <- fetchHierachy targets
-      pure . (,scope) $ pure . logic (LogicConfig { keepHierarchy = hier }) hry
+      pure . (,scope) $ logic (LogicConfig { keepHierarchy = hier }) hry
 
   L.phase "Precalculating the Reduction" $ do
     core <- view cfgCore
     L.info . L.displayf "Requiring %d core items." $ List.length core
 
-    removeables :: S.Set Fact <- S.fromList 
-      <$> mapM 
-        (fmap fst . keyFun) 
-        (toListOf (deepSubelements itemR) (_problemInitial p2))
+    let removeables :: S.Set Fact 
+          = S.fromList $ map 
+            (fst . keyFun) 
+            (toListOf (deepSubelements itemR) (_problemInitial p2))
 
     ((grph, coreSet, closures), p3) <- 
-      toGraphReductionDeepM (handler removeables core <=< keyFun) itemR p2
+      toGraphReductionDeepM (handler removeables core . keyFun) itemR p2
     
     dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
+    
+    whenM (view cfgDumpLogic) . liftIO $ do
+      let m :: M.Map [Int] Fact = fmap (fst . keyFun) 
+            $ M.fromList (itoListOf (deepSubelements itemR) (_problemInitial p2))
+      let filename = wf </> "nnf.json" 
+      BL.appendFile filename 
+        (encode (Builder.toLazyText . displayFact <$>
+          (flattenNnf $ and [ tt f ==> tt (m ^?! ix rs) | (_:rs, f) <- M.toList m ])  
+          ) <> "\n")
    
     return p3
 
