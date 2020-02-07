@@ -350,12 +350,12 @@ logic LogicConfig{..} hry = \case
       -- these methods and fields
       given (cls^.classAccessFlags.contains CEnum) $ c ==> 
         hasSuperClass (cls^.className) "java/lang/Enum"
-        /\ ( requireMethod hry cls . mkAbsMethodId cls 
+        /\ ( methodExist . mkAbsMethodId cls 
            $ "values" 
            <:> MethodDescriptor [] 
             (ReturnDescriptor . Just . JTRef . JTArray .JTRef . JTClass $ cls^.className)
            )
-        /\ ( requireMethod hry cls . mkAbsMethodId cls 
+        /\ ( methodExist . mkAbsMethodId cls 
            $ "valueOf" 
           <:> MethodDescriptor ["Ljava/lang/String;"] 
             (ReturnDescriptor . Just . JTRef . JTClass $ cls^.className)
