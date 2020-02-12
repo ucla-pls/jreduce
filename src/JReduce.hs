@@ -108,9 +108,9 @@ run strat = do
       OverLogicApprox ext bool ->
         runBinary wf =<< JReduce.Logic.describeGraphProblem ext bool wf p2
       OverLogic ext -> do
-        p3 <- JReduce.Logic.describeLogicProblem ext wf p2
+        (costfn, p3) <- JReduce.Logic.describeLogicProblem ext wf p2
         (failure, result) <- runReductionProblem (wf </> "reduction")
-          (ipfBinaryReduction (const 0))
+          (ipfBinaryReduction costfn)
           . meassure (Count "clauses" . maybe 0 (S.size . cnfClauses . ipfClauses))
           $ p3
         checkResults wf p3 (failure, result)

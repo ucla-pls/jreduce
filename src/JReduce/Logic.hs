@@ -247,7 +247,7 @@ describeLogicProblem ::
   -- ^ Keep hierarchy
   -> FilePath 
   -> Problem a Target
-  -> m (Problem a IPF)
+  -> m (IS.IntSet -> Double, Problem a IPF)
 describeLogicProblem hier wf p =  do
   let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
   (keyFun :: Item -> (Fact, Stmt Fact), _) <- L.phase "Initializing key function" $ do
@@ -260,7 +260,7 @@ describeLogicProblem hier wf p =  do
     core <- view cfgCore
     L.info . L.displayf "Requiring %d core items." $ List.length core
 
-    (_, p3) <- toLogicReductionM (handler core . keyFun) itemR p2
+    ((_, v), p3) <- toLogicReductionM (handler core . keyFun) itemR p2
     
     -- dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
     -- whenM (view cfgDumpLogic) . liftIO $ do
@@ -272,7 +272,7 @@ describeLogicProblem hier wf p =  do
     --       (flattenNnf $ and [ tt f ==> tt (m ^?! ix rs) | (_:rs, f) <- M.toList m ])  
     --       ) <> "\n")
    
-    return p3
+    return (fromIntegral . IS.size . fst . IS.split (V.length v), p3)
  
  where 
   -- handler :: S.Set Fact -> HS.HashSet Text.Text -> (Fact, Stmt Fact) -> m (Fact, Bool, [(Fact, Fact)])
