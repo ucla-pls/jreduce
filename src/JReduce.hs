@@ -38,6 +38,7 @@ import qualified Data.Csv as C
 
 -- reduce-util
 import           Control.Reduce.Util
+import           Control.Reduce.Boolean.CNF
 import           Control.Reduce.Util.Logger            as L
 import           Control.Reduce.Util.OptParse
 import           Control.Reduce.Metric
@@ -46,6 +47,7 @@ import           Control.Reduce.Metric
 import           System.DirTree
 
 -- containers
+import qualified Data.Set                              as S
 import qualified Data.IntSet                           as IS
 
 -- base
@@ -100,34 +102,43 @@ run strat = do
 
     p2 <- targetProblem $ p1
 
-    p3 <- p2 & case strat of
+    case strat of
       OverClasses ->
-        JReduce.Classes.describeProblem wf
+        runBinary wf =<< JReduce.Classes.describeProblem wf p2
       OverLogicApprox ext bool ->
-        JReduce.Logic.describeGraphProblem ext bool wf
-      OverLogic -> error "Not supported, yet!"
-
-    (failure, result) <- runReductionProblem (wf </> "reduction")
-      (genericBinaryReduction (IS.size . IS.unions))
-      . meassure (Count "scc" . maybe 0 length)
-      $ p3
-
-    case failure of
-      Just msg ->
-        L.warn $ "Reduction failed: " <> display msg
-      Nothing ->
-        L.info $ "Reduction successfull."
-
-    local (redKeepFolders .~ True) $
-      void $ checkSolution (wf </> "final") p3 result
-
-
-    return (fromJust $ _problemExtractBase p3 result)
+        runBinary wf =<< JReduce.Logic.describeGraphProblem ext bool wf p2
+      OverLogic ext -> do
+        p3 <- JReduce.Logic.describeLogicProblem ext wf p2
+        (failure, result) <- runReductionProblem (wf </> "reduction")
+          (ipfBinaryReduction (const 0))
+          . meassure (Count "clauses" . maybe 0 (S.size . cnfClauses . ipfClauses))
+          $ p3
+        checkResults wf p3 (failure, result)
 
   -- Output the results
   outputResults result
 
   where
+    checkResults wf p3 (failure, result) = do
+      case failure of
+        Just msg ->
+          L.warn $ "Reduction failed: " <> display msg
+        Nothing ->
+          L.info $ "Reduction successfull."
+
+      local (redKeepFolders .~ True) $
+        void $ checkSolution (wf </> "final") p3 result
+
+      return (fromJust $ _problemExtractBase p3 result)
+      
+    runBinary wf p3 = do
+      (failure, result) <- runReductionProblem (wf </> "reduction")
+        (genericBinaryReduction (IS.size . IS.unions))
+        . meassure (Count "scc" . maybe 0 length)
+        $ p3
+      checkResults wf p3 (failure, result)
+
+
     outputResults target = do
       inputFile <- view cfgTarget
       possibleOutput <- view cfgOutput
@@ -139,7 +150,7 @@ run strat = do
 data Strategy
   = OverClasses
   | OverLogicApprox Bool Bool
-  | OverLogic
+  | OverLogic Bool
   deriving (Ord, Eq, Show)
 
 strategyParser :: Parser Strategy
@@ -166,5 +177,7 @@ strategyParser =
         ["logic", "extends", "over"] ->
           Just $ OverLogicApprox True True
         ["logic"] ->
-          Just $ OverLogic
+          Just $ OverLogic False
+        ["logic", "extends"] ->
+          Just $ OverLogic True
         _ -> Nothing

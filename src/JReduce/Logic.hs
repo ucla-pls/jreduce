@@ -75,6 +75,7 @@ import qualified Data.Text.Lazy.Builder        as Builder
 
 -- reduce-util
 import Control.Reduce.Boolean
+import Control.Reduce.Boolean.CNF
 import Control.Reduce.Problem
 import Control.Reduce.Reduction
 import Control.Reduce.Util.Logger as L
@@ -238,6 +239,74 @@ itemR f' = \case
          )
       -- &  methodExceptions
       -- .~ _methodThrows
+
+
+describeLogicProblem :: 
+  MonadIOReader Config m
+  => Bool
+  -- ^ Keep hierarchy
+  -> FilePath 
+  -> Problem a Target
+  -> m (Problem a IPF)
+describeLogicProblem hier wf p =  do
+  let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
+  (keyFun :: Item -> (Fact, Stmt Fact), _) <- L.phase "Initializing key function" $ do
+      let targets = targetClasses $ _problemInitial p
+      let scope = S.fromList ( map (view className) targets)
+      hry <- fetchHierachy targets
+      pure . (,scope) $ logic (LogicConfig { keepHierarchy = hier }) hry
+  
+  L.phase "Precalculating the Reduction" $ do
+    core <- view cfgCore
+    L.info . L.displayf "Requiring %d core items." $ List.length core
+
+    (_, p3) <- toLogicReductionM (handler core . keyFun) itemR p2
+    
+    -- dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
+    -- whenM (view cfgDumpLogic) . liftIO $ do
+    --   let m :: M.Map [Int] Fact = fmap (fst . keyFun) 
+    --         $ M.fromList (itoListOf (deepSubelements itemR) (_problemInitial p2))
+    --   let filename = wf </> "nnf.json" 
+    --   BL.appendFile filename 
+    --     (encode (Builder.toLazyText . displayFact <$>
+    --       (flattenNnf $ and [ tt f ==> tt (m ^?! ix rs) | (_:rs, f) <- M.toList m ])  
+    --       ) <> "\n")
+   
+    return p3
+ 
+ where 
+  -- handler :: S.Set Fact -> HS.HashSet Text.Text -> (Fact, Stmt Fact) -> m (Fact, Bool, [(Fact, Fact)])
+  handler core (key, sentence) = do
+    let txt = serializeWith displayFact key
+        isCore = txt `HS.member` core
+
+    let debuginfo = displayText txt 
+              <> (if isCore then " CORE" else "")
+
+    -- Ensure that the sentence have been evalutated
+    L.logtime L.DEBUG ("Processing " <> debuginfo) $ deepseq sentence (pure ())
+    
+    -- whenM (view cfgDumpLogic) . liftIO $ do
+    --   let filename = wf </> "nnf.json" 
+    --   BL.appendFile filename (encode (fmap (Builder.toLazyText . displayFact) nnf) <> "\n")
+
+    whenM (view cfgDumpItems) . liftIO $ do
+      let filename = wf </> "items.txt" 
+      LazyText.appendFile filename . LazyText.toLazyText  
+       $ displayText txt <> "\n" 
+          <> "  BEF " 
+            <> displayString (show (fmap displayFact (flattenNnf . nnfFromStmt . fromStmt $ sentence))) <> "\n" 
+          -- <> "  AFT " <> displayString (show (fmap displayFact nnf)) <> "\n"
+          -- <> foldMap (\a -> 
+          --   "  " <> case a of 
+          --        DDeps x y -> "DEP " <> displayFact x <> " ~~> " <> displayFact y
+          --        DLit  (Literal b x)  -> "LIT " <> bool "! " "" b <> displayFact x
+          --        DFalse  -> "FLS "
+          --   <> "\n") 
+          --   edges
+       
+
+    return (key, sentence)-- isCore, [ (a, b) | DDeps a b <- edges ])
 
 describeGraphProblem ::
   MonadIOReader Config m
