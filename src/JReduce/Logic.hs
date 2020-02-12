@@ -133,7 +133,7 @@ displayFact = \case
 
 requireClassNamesOf ::
   (HasClassName c, HasClassNames a)
-  => c -> Getting (Endo (Endo (Term Fact))) s a -> s -> Term Fact
+  => c -> Getting (Endo (Endo (Stmt Fact))) s a -> s -> Stmt Fact
 requireClassNamesOf c l a =
   forallOf (l . classNames) a (requireClassName c)
 
@@ -251,7 +251,7 @@ describeGraphProblem ::
 describeGraphProblem hier isOver wf p = do
   -- describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
   let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
-  (keyFun :: Item -> (Fact, Term Fact), _) <- L.phase "Initializing key function" $ do
+  (keyFun :: Item -> (Fact, Stmt Fact), _) <- L.phase "Initializing key function" $ do
       let targets = targetClasses $ _problemInitial p
       let scope = S.fromList ( map (view className) targets)
       hry <- fetchHierachy targets
@@ -283,7 +283,7 @@ describeGraphProblem hier isOver wf p = do
     return p3
 
  where 
-  -- handler :: S.Set Fact -> HS.HashSet Text.Text -> (Fact, Term Fact) -> m (Fact, Bool, [(Fact, Fact)])
+  -- handler :: S.Set Fact -> HS.HashSet Text.Text -> (Fact, Stmt Fact) -> m (Fact, Bool, [(Fact, Fact)])
   handler removeables core (key, sentence) = do
     let txt = serializeWith displayFact key
         isCore = txt `HS.member` core
@@ -294,7 +294,7 @@ describeGraphProblem hier isOver wf p = do
     -- Ensure that the sentence have been evalutated
     L.logtime L.DEBUG ("Processing " <> debuginfo) $ deepseq sentence (pure ())
 
-    let nnf = flattenNnf . nnfFromTerm . fromTerm . runIdentity  $ traverseVariables 
+    let nnf = flattenNnf . nnfFromStmt . fromStmt . runIdentity  $ traverseVariables 
           (\n -> if n `S.member` removeables
             then
               pure $ tt n  
@@ -317,7 +317,7 @@ describeGraphProblem hier isOver wf p = do
       LazyText.appendFile filename . LazyText.toLazyText  
        $ displayText txt <> "\n" 
           <> "  BEF " 
-            <> displayString (show (fmap displayFact (flattenNnf . nnfFromTerm . fromTerm $ sentence))) <> "\n" 
+            <> displayString (show (fmap displayFact (flattenNnf . nnfFromStmt . fromStmt $ sentence))) <> "\n" 
           <> "  AFT " <> displayString (show (fmap displayFact nnf)) <> "\n"
           <> foldMap (\a -> 
             "  " <> case a of 
@@ -335,7 +335,7 @@ data LogicConfig = LogicConfig
   { keepHierarchy :: Bool
   }
 
-logic :: LogicConfig -> Hierarchy -> Item -> (Fact, Term Fact)
+logic :: LogicConfig -> Hierarchy -> Item -> (Fact, Stmt Fact)
 logic LogicConfig{..} hry = \case
 
   IContent (ClassFile cls) -> ClassExist (cls ^. className)
@@ -687,7 +687,7 @@ logic LogicConfig{..} hry = \case
     requireSubtype ::
       (AsTypeInfo a, AsTypeInfo b)
       => a -> b
-      -> Term Fact
+      -> Stmt Fact
     requireSubtype (asTypeInfo -> TRef as) (asTypeInfo -> TRef bs) = and
       [ a `requireSubRefType` b | a <- toList as, b <- toList bs]
       where
@@ -714,22 +714,22 @@ logic LogicConfig{..} hry = \case
       (Just TTop)
       (ti ^.._TRef.folded._JTArray)
 
-unbrokenPath :: SubclassPath -> Term Fact
+unbrokenPath :: SubclassPath -> Stmt Fact
 unbrokenPath path =
   and [ isSubclass f t e | (f, t, e) <- subclassEdges path]
 
-isSubclass :: ClassName -> ClassName -> HEdge -> Term Fact
+isSubclass :: ClassName -> ClassName -> HEdge -> Stmt Fact
 isSubclass cn1 cn2 = \case
   Implement -> hasInterface cn1 cn2
   Extend -> hasSuperClass cn1 cn2
 
-hasInterface :: ClassName -> ClassName -> Term Fact
+hasInterface :: ClassName -> ClassName -> Stmt Fact
 hasInterface cn1 cn2 = tt (HasInterface cn1 cn2)
 
-hasSuperClass :: ClassName -> ClassName -> Term Fact
+hasSuperClass :: ClassName -> ClassName -> Stmt Fact
 hasSuperClass cn1 cn2 = tt (HasSuperClass cn1 cn2)
 
-requireMethodHandle :: HasClassName c => Hierarchy -> c -> B.MethodHandle B.High -> Term Fact
+requireMethodHandle :: HasClassName c => Hierarchy -> c -> B.MethodHandle B.High -> Stmt Fact
 requireMethodHandle hry cls = \case
   B.MHField (B.MethodHandleField _ f)
     -> requireField hry cls f
@@ -741,50 +741,50 @@ requireMethodHandle hry cls = \case
   B.MHInterface (B.MethodHandleInterface (B.AbsInterfaceMethodId rt)) ->
     requireMethod hry cls . AbsMethodId . view asInClass $ rt
 
-requireBootstrapMethod :: HasClassName c => c -> Int -> Term Fact
+requireBootstrapMethod :: HasClassName c => c -> Int -> Stmt Fact
 requireBootstrapMethod c i = tt (HasBootstrapMethod (c^.className) i)
 
-requireClassNames :: (HasClassName c, HasClassNames a) => c -> a -> Term Fact
+requireClassNames :: (HasClassName c, HasClassNames a) => c -> a -> Stmt Fact
 requireClassNames c =
   andOf (classNames . to (requireClassName c))
 
-requireClassName :: (HasClassName c, HasClassName a) => c -> a -> Term Fact
+requireClassName :: (HasClassName c, HasClassName a) => c -> a -> Stmt Fact
 requireClassName oc ic =
   classExist ic /\ isInnerClassOf oc ic
 
-classExist :: HasClassName a =>  a -> Term Fact
+classExist :: HasClassName a =>  a -> Stmt Fact
 classExist (view className -> cn) =
   tt (ClassExist cn)
 
-fieldExist :: AbsFieldId -> Term Fact
+fieldExist :: AbsFieldId -> Stmt Fact
 fieldExist f =
   tt (FieldExist f)
 
-methodExist :: AbsMethodId -> Term Fact
+methodExist :: AbsMethodId -> Stmt Fact
 methodExist f =
   tt (MethodExist f)
 
-requireField :: HasClassName c => Hierarchy -> c -> AbsFieldId -> Term Fact
+requireField :: HasClassName c => Hierarchy -> c -> AbsFieldId -> Stmt Fact
 requireField hry cn fid = isInnerClassOf cn fid /\ or
   [ fieldExist fid' /\ unbrokenPath path
   | (fid', path) <- fieldLocationPaths fid hry
   ]
 
-requireMethod :: HasClassName c => Hierarchy -> c -> AbsMethodId -> Term Fact
+requireMethod :: HasClassName c => Hierarchy -> c -> AbsMethodId -> Stmt Fact
 requireMethod hry cn mid = isInnerClassOf cn mid /\ or
   [ methodExist mid' /\ unbrokenPath path
   | (mid', _, path) <- superDeclarationPaths mid hry
   ]
 
-codeIsUntuched :: AbsMethodId -> Term Fact
+codeIsUntuched :: AbsMethodId -> Stmt Fact
 codeIsUntuched m =
   tt (CodeIsUntuched m)
 
-isInnerClassOf :: (HasClassName c1, HasClassName c2) => c1 -> c2 -> Term Fact
+isInnerClassOf :: (HasClassName c1, HasClassName c2) => c1 -> c2 -> Stmt Fact
 isInnerClassOf (view className -> c1) (view className -> c2) =
    given (isInnerClass c2) (tt (IsInnerClass c1 c2))
 
-withLogic :: Fact -> (Term Fact -> [Term Fact]) -> (Fact, Term Fact)
+withLogic :: Fact -> (Stmt Fact -> [Stmt Fact]) -> (Fact, Stmt Fact)
 withLogic f fn = (f, and (fn (tt f)))
 
 whenM :: Monad m => (m Bool) -> m () -> m ()
