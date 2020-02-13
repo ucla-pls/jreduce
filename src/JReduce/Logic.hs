@@ -248,7 +248,7 @@ describeLogicProblem ::
   -> FilePath 
   -> Problem a Target
   -> m (IS.IntSet -> Double, Problem a IPF)
-describeLogicProblem hier wf p =  do
+describeLogicProblem hier _ p =  do
   let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
   (keyFun :: Item -> (Fact, Stmt Fact), _) <- L.phase "Initializing key function" $ do
       let targets = targetClasses $ _problemInitial p
@@ -259,7 +259,6 @@ describeLogicProblem hier wf p =  do
   L.phase "Precalculating the Reduction" $ do
     core <- view cfgCore
     L.info . L.displayf "Requiring %d core items." $ List.length core
-
     ((_, v), p3) <- toLogicReductionM (handler core . keyFun) itemR p2
     
     -- dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
@@ -290,12 +289,12 @@ describeLogicProblem hier wf p =  do
     --   let filename = wf </> "nnf.json" 
     --   BL.appendFile filename (encode (fmap (Builder.toLazyText . displayFact) nnf) <> "\n")
 
-    whenM (view cfgDumpItems) . liftIO $ do
-      let filename = wf </> "items.txt" 
-      LazyText.appendFile filename . LazyText.toLazyText  
-       $ displayText txt <> "\n" 
-          <> "  BEF " 
-            <> displayString (show (fmap displayFact (flattenNnf . nnfFromStmt . fromStmt $ sentence))) <> "\n" 
+    -- whenM (view cfgDumpItems) . liftIO $ do
+    --   let filename = wf </> "items.txt" 
+    --   LazyText.appendFile filename . LazyText.toLazyText  
+    --    $ displayText txt <> "\n" 
+    --       <> "  BEF " 
+    --         <> displayString (show (fmap displayFact (flattenNnf . nnfFromStmt . fromStmt $ sentence))) <> "\n" 
           -- <> "  AFT " <> displayString (show (fmap displayFact nnf)) <> "\n"
           -- <> foldMap (\a -> 
           --   "  " <> case a of 
@@ -306,7 +305,7 @@ describeLogicProblem hier wf p =  do
           --   edges
        
 
-    return (key, sentence)-- isCore, [ (a, b) | DDeps a b <- edges ])
+    return (key, (if isCore then tt key else true) /\ sentence)-- isCore, [ (a, b) | DDeps a b <- edges ])
 
 describeGraphProblem ::
   MonadIOReader Config m

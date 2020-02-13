@@ -47,7 +47,7 @@ import           Control.Reduce.Metric
 import           System.DirTree
 
 -- containers
-import qualified Data.Set                              as S
+-- import qualified Data.Set                              as S
 import qualified Data.IntSet                           as IS
 
 -- base
@@ -111,7 +111,7 @@ run strat = do
         (costfn, p3) <- JReduce.Logic.describeLogicProblem ext wf p2
         (failure, result) <- runReductionProblem (wf </> "reduction")
           (ipfBinaryReduction costfn)
-          . meassure (Count "clauses" . maybe 0 (S.size . cnfClauses . ipfClauses))
+          . meassure (Count "vars" . maybe 0 (IS.size . ipfVars))
           $ p3
         checkResults wf p3 (failure, result)
 
