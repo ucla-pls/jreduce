@@ -266,17 +266,24 @@ describeLogicProblem hier wf p =  do
             = S.fromList $ map 
               (fst . keyFun) 
               (toListOf (deepSubelements itemR) (_problemInitial p2))
-    ((_, v), p3) <- toLogicReductionM (handler removeables core . keyFun) itemR p2
+
+    ((cnf, v), p3) <- toLogicReductionM (handler removeables core . keyFun) itemR p2
+    
+    let required = M.fromList . map (over _2 (LazyText.unpack . Builder.toLazyText . displayFact . fst . keyFun))
+                  . itoListOf (deepSubelements itemR)  
+                  $ _problemInitial p2
     
     -- dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
-    -- whenM (view cfgDumpLogic) . liftIO $ do
-    --   let m :: M.Map [Int] Fact = fmap (fst . keyFun) 
-    --         $ M.fromList (itoListOf (deepSubelements itemR) (_problemInitial p2))
-    --   let filename = wf </> "nnf.json" 
-    --   BL.appendFile filename 
-    --     (encode (Builder.toLazyText . displayFact <$>
-    --       (flattenNnf $ and [ tt f ==> tt (m ^?! ix rs) | (_:rs, f) <- M.toList m ])  
-    --       ) <> "\n")
+    whenM (view cfgDumpLogic) . liftIO $ do
+      LazyText.appendFile (wf </> "cnf.txt") . LazyText.toLazyText  
+       $ foldMap (\c ->
+                 displayString "  " <> 
+                 ( displayString $ 
+                 LS.displayImplication (\a -> 
+                    maybe (shows a) 
+                  (showString . fromJust . flip M.lookup required) $ v V.!? a) c "\n"
+                )
+            ) (cnfClauses cnf)
    
     return (fromIntegral . IS.size . fst . IS.split (V.length v), p3)
  
