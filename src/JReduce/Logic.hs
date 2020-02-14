@@ -70,12 +70,14 @@ import System.FilePath
 -- text
 import qualified Data.Text as Text 
 import qualified Data.Text.Lazy.IO as LazyText
+import qualified Data.Text.Lazy as LazyText
 import qualified Data.Text.Lazy.Builder as LazyText
 import qualified Data.Text.Lazy.Builder        as Builder
 
 -- reduce-util
 import Control.Reduce.Boolean
 import Control.Reduce.Boolean.CNF
+import qualified Control.Reduce.Boolean.LiteralSet as LS
 import Control.Reduce.Problem
 import Control.Reduce.Reduction
 import Control.Reduce.Util.Logger as L
@@ -248,7 +250,7 @@ describeLogicProblem ::
   -> FilePath 
   -> Problem a Target
   -> m (IS.IntSet -> Double, Problem a IPF)
-describeLogicProblem hier _ p =  do
+describeLogicProblem hier wf p =  do
   let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
   (keyFun :: Item -> (Fact, Stmt Fact), _) <- L.phase "Initializing key function" $ do
       let targets = targetClasses $ _problemInitial p
@@ -285,24 +287,26 @@ describeLogicProblem hier _ p =  do
     -- Ensure that the sentence have been evalutated
     L.logtime L.DEBUG ("Processing " <> debuginfo) $ deepseq sentence (pure ())
     
-    -- whenM (view cfgDumpLogic) . liftIO $ do
-    --   let filename = wf </> "nnf.json" 
-    --   BL.appendFile filename (encode (fmap (Builder.toLazyText . displayFact) nnf) <> "\n")
+    whenM (view cfgDumpLogic) . liftIO $ do
+      let filename = wf </> "nnf.json" 
+      BL.appendFile filename (encode (fmap (Builder.toLazyText . displayFact) sentence) <> "\n")
 
-    -- whenM (view cfgDumpItems) . liftIO $ do
-    --   let filename = wf </> "items.txt" 
-    --   LazyText.appendFile filename . LazyText.toLazyText  
-    --    $ displayText txt <> "\n" 
-    --       <> "  BEF " 
-    --         <> displayString (show (fmap displayFact (flattenNnf . nnfFromStmt . fromStmt $ sentence))) <> "\n" 
-          -- <> "  AFT " <> displayString (show (fmap displayFact nnf)) <> "\n"
-          -- <> foldMap (\a -> 
-          --   "  " <> case a of 
-          --        DDeps x y -> "DEP " <> displayFact x <> " ~~> " <> displayFact y
-          --        DLit  (Literal b x)  -> "LIT " <> bool "! " "" b <> displayFact x
-          --        DFalse  -> "FLS "
-          --   <> "\n") 
-          --   edges
+    whenM (view cfgDumpItems) . liftIO $ do
+      let nnf = Builder.toLazyText . displayFact <$> (flattenNnf . nnfFromStmt . fromStmt $ sentence)
+      let (nnf', back) = memorizeNnf nnf
+      let cnf = toMinimalCNF (maxVariable nnf') nnf'
+      let filename = wf </> "items.txt" 
+      LazyText.appendFile filename . LazyText.toLazyText  
+       $ displayText txt <> "\n" 
+          <> "  BEF " 
+            <> displayString (show nnf) <> "\n" 
+          <> foldMap (\c ->
+                displayString "  " <> 
+                ( displayString $ 
+                  LS.displayImplication (\a -> maybe (shows a) (showString . LazyText.unpack) $ back V.!? a) c "\n"
+                )
+            ) (cnfClauses cnf)
+                  
        
 
     return (key, (if isCore then tt key else true) /\ sentence)-- isCore, [ (a, b) | DDeps a b <- edges ])
