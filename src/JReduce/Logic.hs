@@ -707,20 +707,13 @@ logic LogicConfig{..} hry = \case
                 Right (isSpecial, isStatic, m) ->
                   ( let mid = AbsMethodId $ m^.asInClass
                     in (c ==> if isSpecial then methodExist mid else requireMethod hry cls mid)
-                        /\ given 
-                        (or 
-                          [ -- If it is an access$ method it depends on the existance of
-                            -- this code to exit
-                            Text.isPrefixOf "access$" (m^.methodIdName)
-                          , -- If the class is an annoumus class it depends on the existence
-                            -- of the code that defines it, execept if it
-                            -- call itself.
+                        /\ given (Text.isPrefixOf "access$" (m^.methodIdName))
+                          (methodExist mid ==> c)   
+                        /\ given (
                             ( isNumber . Text.head . last . Text.splitOn "$" 
                             $ mid^.className.fullyQualifiedName
                             ) /\ mid^.className /= cls ^.className
-                          ]
-                        ) 
-                        (methodExist mid ==> c) 
+                          ) (classExist (mid^.className) ==> c)
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
                     <> (map asTypeInfo $ m^.methodIdArgumentTypes)
                   )
