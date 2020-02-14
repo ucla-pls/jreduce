@@ -261,7 +261,12 @@ describeLogicProblem hier wf p =  do
   L.phase "Precalculating the Reduction" $ do
     core <- view cfgCore
     L.info . L.displayf "Requiring %d core items." $ List.length core
-    ((_, v), p3) <- toLogicReductionM (handler core . keyFun) itemR p2
+  
+    let removeables :: S.Set Fact 
+            = S.fromList $ map 
+              (fst . keyFun) 
+              (toListOf (deepSubelements itemR) (_problemInitial p2))
+    ((_, v), p3) <- toLogicReductionM (handler removeables core . keyFun) itemR p2
     
     -- dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
     -- whenM (view cfgDumpLogic) . liftIO $ do
@@ -277,7 +282,7 @@ describeLogicProblem hier wf p =  do
  
  where 
   -- handler :: S.Set Fact -> HS.HashSet Text.Text -> (Fact, Stmt Fact) -> m (Fact, Bool, [(Fact, Fact)])
-  handler core (key, sentence) = do
+  handler removeables core (key, sentence) = do
     let txt = serializeWith displayFact key
         isCore = txt `HS.member` core
 
@@ -293,13 +298,24 @@ describeLogicProblem hier wf p =  do
 
     whenM (view cfgDumpItems) . liftIO $ do
       let nnf = Builder.toLazyText . displayFact <$> (flattenNnf . nnfFromStmt . fromStmt $ sentence)
-      let (nnf', back) = memorizeNnf nnf
+      let nnfAfter = Builder.toLazyText . displayFact <$> (flattenNnf . nnfFromStmt . fromStmt . runIdentity  $ traverseVariables 
+            (\n -> if n `S.member` removeables
+              then
+                pure $ tt n  
+              else do
+                -- L.warn ("Did not find " <> displayFact n)
+                pure $ true
+            )
+            sentence)
+      let (nnf', back) = memorizeNnf nnfAfter
       let cnf = toMinimalCNF (maxVariable nnf') nnf'
       let filename = wf </> "items.txt" 
       LazyText.appendFile filename . LazyText.toLazyText  
        $ displayText txt <> "\n" 
           <> "  BEF " 
             <> displayString (show nnf) <> "\n" 
+          <> "  AFT " 
+            <> displayString (show nnfAfter) <> "\n" 
           <> foldMap (\c ->
                 displayString "  " <> 
                 ( displayString $ 
