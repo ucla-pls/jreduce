@@ -35,6 +35,7 @@ import Data.Maybe
 import Data.Char (isNumber)
 import Data.Bool (bool)
 import Data.Monoid
+import Text.Show
 import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.List as List
@@ -272,18 +273,26 @@ describeLogicProblem hier wf p =  do
     let required = M.fromList . map (over _2 (LazyText.unpack . Builder.toLazyText . displayFact . fst . keyFun))
                   . itoListOf (deepSubelements itemR)  
                   $ _problemInitial p2
+
+    let 
+      renderVar a = maybe (shows a) (showString . fromJust . flip M.lookup required) $ v V.!? a
     
     -- dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
     whenM (view cfgDumpLogic) . liftIO $ do
       LazyText.appendFile (wf </> "cnf.txt") . LazyText.toLazyText  
        $ foldMap (\c ->
-                 displayString "  " <> 
-                 ( displayString $ 
-                 LS.displayImplication (\a -> 
-                    maybe (shows a) 
-                  (showString . fromJust . flip M.lookup required) $ v V.!? a) c "\n"
-                )
+                 displayString "  " <> ( displayString $ LS.displayImplication renderVar c "\n" )
             ) (cnfClauses cnf)
+    
+    whenM (view cfgDumpLogic) . liftIO $ do
+      let 
+        (a, x) = weightedSubDisjunctions 
+          (fromIntegral . IS.size . fst . IS.split (V.length v)) 
+          (fromJust $ fromCNF cnf)
+        displaySet a' = displayString (showListWith renderVar (IS.toList a') "\n")
+      LazyText.appendFile (wf </> "firstround.txt") . LazyText.toLazyText 
+        $ displaySet a <> foldMap displaySet x
+
    
     return (fromIntegral . IS.size . fst . IS.split (V.length v), p3)
  
