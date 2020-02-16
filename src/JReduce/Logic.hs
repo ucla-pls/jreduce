@@ -275,21 +275,30 @@ describeLogicProblem hier wf p =  do
                   $ _problemInitial p2
 
     let 
+      renderIndex a = maybe (shows a) (shows) $ v V.!? a
       renderVar a = maybe (shows a) (showString . fromJust . flip M.lookup required) $ v V.!? a
     
     -- dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
     whenM (view cfgDumpLogic) . liftIO $ do
       LazyText.appendFile (wf </> "cnf.txt") . LazyText.toLazyText  
-       $ foldMap (\c ->
-                 displayString "  " <> ( displayString $ LS.displayImplication renderVar c "\n" )
-            ) (cnfClauses cnf)
+       $ foldMap (\c ->  displayString $ LS.displayImplication renderVar c "\n") 
+       (cnfClauses cnf)
     
     whenM (view cfgDumpLogic) . liftIO $ do
       let 
-        (a, x) = weightedSubDisjunctions 
+        (a, x) = weightedSubDisjunctionsWithCNFs
           (fromIntegral . IS.size . fst . IS.split (V.length v)) 
           (fromJust $ fromCNF cnf)
-        displaySet a' = displayString (showListWith renderVar (IS.toList a') "\n")
+        displaySet (a', ab, cnf') = 
+          displayString 
+            ( showListWith renderVar (IS.toList a') 
+            . showString " - "
+            . showListWith renderIndex (IS.toList a') 
+            . showString " - "
+            . showListWith shows (IS.toList a') 
+            . showString " - "
+            . showListWith shows (IS.toList ab) $ "\n")
+          <> foldMap (\c ->  displayString $ LS.displayImplication shows c "\n") cnf'
       LazyText.appendFile (wf </> "firstround.txt") . LazyText.toLazyText 
         $ displaySet a <> foldMap displaySet x
 
