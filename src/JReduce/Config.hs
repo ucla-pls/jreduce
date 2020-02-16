@@ -217,7 +217,7 @@ configParser = do
   _cfgReductionOptions <-
     parseReductionOptions
 
-  _cfgPredicateOptions <-
+  _cfgPredicateOptionsIO <-
     parsePredicateOptions
 
   ioCmdTemplate <-
@@ -225,6 +225,7 @@ configParser = do
 
   pure $ do
     _cfgCore <- ioCore
+    _cfgPredicateOptions <- _cfgPredicateOptionsIO
     _cfgCmdTemplate <- either fail return =<< ioCmdTemplate
     return $ Config {..}
 
