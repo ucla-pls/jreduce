@@ -285,6 +285,10 @@ describeLogicProblem hier wf p =  do
        (cnfClauses cnf)
     
     whenM (view cfgDumpLogic) . liftIO $ do
+      LazyText.appendFile (wf </> "memorizer.txt") . LazyText.toLazyText  
+       $ foldMap (\c ->  displayString (shows c "\n")) v
+    
+    whenM (view cfgDumpLogic) . liftIO $ do
       let 
         (a, x) = weightedSubDisjunctionsWithCNFs
           (fromIntegral . IS.size . fst . IS.split (V.length v)) 
