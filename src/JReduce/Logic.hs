@@ -757,6 +757,9 @@ logic LogicConfig{..} hry = \case
           c ==> forall (method^.methodReturnType.simpleType)
             \mt -> stack 0 `requireSubtype` mt
 
+        InstanceOf ct ->
+          c ==> ct `requireSubtype` stack 0
+
         _ -> true
     | (state, B.opcode -> oper) <-
         V.toList $ V.zip typeCheckStates (code ^. codeByteCode)
