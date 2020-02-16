@@ -684,9 +684,13 @@ logic LogicConfig{..} hry = \case
     [ -- If the code was not stubbed, then we have to require that the
       -- classes in the exception table, stack map, and byte-code instructions
       -- exits
-      c ==> requireClassNamesOf cls (codeExceptionTable.folded) code
-    , c ==> requireClassNamesOf cls (codeStackMap._Just) code
+     -- c ==> requireClassNamesOf cls (codeExceptionTable.folded) code
+      c ==> requireClassNamesOf cls (codeStackMap._Just) code
     , c ==> requireClassNamesOf cls (codeByteCode.folded) code
+    , c ==> forallOf (codeExceptionTable.folded.ehCatchType._Just) code \ct -> 
+        requireClassName cls ct
+        /\ ct `requireSubtype` ("java/lang/Throwable" :: ClassName)
+      
     ] ++
     [ case oper of
         ArrayStore _ ->
