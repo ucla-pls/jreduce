@@ -18,6 +18,9 @@ import           Control.Lens
 -- mtl
 import           Control.Monad.Reader
 
+-- time 
+import Data.Time.Clock
+
 -- text
 import qualified Data.Text as Text
 
@@ -92,6 +95,7 @@ run :: Strategy -> ReaderT Config IO ()
 run strat = do
   Config {..} <- ask
   L.info "Started JReduce."
+  start <- liftIO getCurrentTime
 
   result <- withWorkFolder _cfgWorkFolder $ \wf -> do
 
@@ -104,12 +108,12 @@ run strat = do
 
     case strat of
       OverClasses ->
-        runBinary wf =<< JReduce.Classes.describeProblem wf p2
+        runBinary start wf =<< JReduce.Classes.describeProblem wf p2
       OverLogicApprox ext bool ->
-        runBinary wf =<< JReduce.Logic.describeGraphProblem ext bool wf p2
+        runBinary start wf =<< JReduce.Logic.describeGraphProblem ext bool wf p2
       OverLogic ext -> do
         (costfn, p3) <- JReduce.Logic.describeLogicProblem ext wf p2
-        (failure, result) <- runReductionProblem (wf </> "reduction")
+        (failure, result) <- runReductionProblem start (wf </> "reduction")
           (ipfBinaryReduction costfn)
           . meassure (Count "vars" . maybe 0 (IS.size . ipfVars))
           $ p3
@@ -131,8 +135,8 @@ run strat = do
 
       return (fromJust $ _problemExtractBase p3 result)
       
-    runBinary wf p3 = do
-      (failure, result) <- runReductionProblem (wf </> "reduction")
+    runBinary start wf p3 = do
+      (failure, result) <- runReductionProblem start (wf </> "reduction")
         (genericBinaryReduction (IS.size . IS.unions))
         . meassure (Count "scc" . maybe 0 length)
         $ p3
