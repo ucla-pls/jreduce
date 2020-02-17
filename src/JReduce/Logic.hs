@@ -704,6 +704,17 @@ logic LogicConfig{..} hry = \case
           -- element on the stack has to be a subclass of fields class.
           c ==> requireField hry cls fid
             /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
+       
+        -- TODO: Experimental overapproximation. 
+        -- The idea is to require all extensions of the class variable.
+        Push (Just (VClass (JTClass cn))) ->
+          c ==> forall (S.fromList p') unbrokenPath
+         where 
+          p'= 
+           [ path 
+           | b <- superclasses cn hry 
+           , path <- subclassPaths cn b hry 
+           ]
 
         Put fa fid ->
           -- For a put value is valid the field has to exist, and the first
