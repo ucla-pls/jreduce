@@ -290,19 +290,20 @@ describeLogicProblem hier wf p =  do
     
     whenM (view cfgDumpLogic) . liftIO $ do
       let 
-        (a, x) = weightedSubDisjunctionsWithCNFs
+        (a, x) = weightedProgression
           (fromIntegral . IS.size . fst . IS.split (V.length v)) 
           (fromJust $ fromCNF cnf)
-        displaySet (a', ab, cnf') = 
+        displaySet a' = 
           displayString 
             ( showListWith renderVar (IS.toList a') 
             . showString " - "
             . showListWith renderIndex (IS.toList a') 
             . showString " - "
-            . showListWith shows (IS.toList a') 
-            . showString " - "
-            . showListWith shows (IS.toList ab) $ "\n")
-          <> foldMap (\c ->  displayString $ LS.displayImplication shows c "\n") cnf'
+            . showListWith shows (IS.toList a') $ "\n"
+            )
+            -- . showString " - "
+            -- . showListWith shows (IS.toList ab) $ "\n")
+          -- <> foldMap (\c ->  displayString $ LS.displayImplication shows c "\n") cnf'
       LazyText.appendFile (wf </> "firstround.txt") . LazyText.toLazyText 
         $ displaySet a <> foldMap displaySet x
 
