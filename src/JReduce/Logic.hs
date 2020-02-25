@@ -402,6 +402,7 @@ describeGraphProblem hier isOver wf p = do
 
  where 
   -- handler :: S.Set Fact -> HS.HashSet Text.Text -> (Fact, Stmt Fact) -> m (Fact, Bool, [(Fact, Fact)])
+  {-# SCC handler #-}
   handler removeables core (key, sentence) = do
     let txt = serializeWith displayFact key
         isCore = txt `HS.member` core
@@ -740,7 +741,7 @@ logic LogicConfig{..} hry = \case
                         /\ given (Text.isPrefixOf "access$" (m^.methodIdName))
                           (methodExist mid ==> c)   
                         /\ given (
-                            ( isNumber . Text.head . last . Text.splitOn "$" 
+                            ( maybe False (isNumber . fst) . Text.uncons . last . Text.splitOn "$" 
                             $ mid^.className.fullyQualifiedName
                             ) /\ mid^.className /= cls ^.className
                           ) (classExist (mid^.className) ==> c)
