@@ -245,9 +245,7 @@ deepenTarget :: DirTree BL.ByteString -> IO Target
 deepenTarget = imapM (readTargetFile . fileKeyToPath) where
   readTargetFile :: FilePath -> BL.ByteString -> IO Content
   readTargetFile fp bst = case asClassName fp of
-    Just _ -> return . ClassFile
-      . removeOverrideAnnotations
-      . either error id $ do
+    Just _ -> return . either (const (MetaData bst)) (ClassFile . removeOverrideAnnotations) $ do
         cf <- first show (readClassFile' True bst)
         first unlines $ fromClassFile cf
       
