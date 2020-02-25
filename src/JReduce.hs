@@ -42,7 +42,6 @@ import qualified Data.Csv as C
 -- reduce-util
 import           Control.Reduce.Util
 import           Control.Reduce.Boolean.CNF
-import           Control.Reduce.Reduction
 import           Control.Reduce.Util.Logger            as L
 import           Control.Reduce.Util.OptParse
 import           Control.Reduce.Metric
@@ -105,25 +104,16 @@ run strat = do
 
     let p1 = meassure dirTreeMetric p0
     case strat of
-      OverFiles -> do
-        let p2 = toReductionTree dirTreeR p1
-
-        (failure, result) <- runReductionProblem start (wf </> "reduction")
-          (genericBinaryReduction length)
-          . meassure (Count "files" . maybe 0 length)
-          $ p2
-        checkResults wf p2 (failure, result)
-
-      OverClasses -> do
-        p2 <- targetProblem $ p1
+      OverClasses b -> do
+        p2 <- targetProblem b $ p1
         runBinary start wf =<< JReduce.Classes.describeProblem wf p2
 
       OverLogicApprox ext bool -> do
-        p2 <- targetProblem $ p1
+        p2 <- targetProblem True $ p1
         runBinary start wf =<< JReduce.Logic.describeGraphProblem ext bool wf p2
 
       OverLogic ext -> do
-        p2 <- targetProblem $ p1
+        p2 <- targetProblem True $ p1
         (costfn, p3) <- JReduce.Logic.describeLogicProblem ext wf p2
         (failure, result) <- runReductionProblem start (wf </> "reduction")
           (ipfBinaryReduction costfn)
@@ -164,8 +154,7 @@ run strat = do
     orFail msg = maybe (fail msg) return
 
 data Strategy
-  = OverFiles
-  | OverClasses
+  = OverClasses Bool
   | OverLogicApprox Bool Bool
   | OverLogic Bool
   deriving (Ord, Eq, Show)
@@ -181,13 +170,13 @@ strategyParser =
     ( "reduce by different granularity (default: deep)."
       ++ "Choose between class, stubs, and deep."
     )
-  <> value OverClasses
+  <> value (OverClasses False)
   where
     strategyReader :: ReadM Strategy
     strategyReader = maybeReader $ \s ->
       case Text.split (=='+') . Text.toLower . Text.pack $ s of
-        "files":[] -> Just OverFiles
-        "classes":[] -> Just OverClasses
+        "classes":[] -> Just $ OverClasses True
+        ["classes", "flat" ] -> Just $ OverClasses False
         ["logic", "under"] ->
           Just $ OverLogicApprox False False
         ["logic", "over"] ->

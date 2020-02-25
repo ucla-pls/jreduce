@@ -134,11 +134,13 @@ contentR f = \case
 
 targetProblem
   :: MonadIOReader env m
-  => Problem a (DirTree BL.ByteString)
+  => Bool
+  -> Problem a (DirTree BL.ByteString)
   -> m (Problem a Target)
-targetProblem p1 = do
+targetProblem expandJar p1 = do
   p2 <- liftIO
-    $ refineProblemA (fmap (Just . undeepenTarget, ) . deepenTarget) p1
+    $ refineProblemA (fmap (Just . undeepenTarget, ) 
+      . deepenTarget expandJar) p1
   return $ meassure targetMetric p2
 
 
@@ -241,8 +243,8 @@ instance Metric TargetMetric where
       <-> display _targetMetricOtherFiles
       <-> displayString "other"
 
-deepenTarget :: DirTree BL.ByteString -> IO Target
-deepenTarget = imapM (readTargetFile . fileKeyToPath) where
+deepenTarget :: Bool -> DirTree BL.ByteString -> IO Target
+deepenTarget expandJar = imapM (readTargetFile . fileKeyToPath) where
   readTargetFile :: FilePath -> BL.ByteString -> IO Content
   readTargetFile fp bst = case asClassName fp of
     Just _ -> return . either (const (MetaData bst)) (ClassFile . removeOverrideAnnotations) $ do
@@ -250,15 +252,16 @@ deepenTarget = imapM (readTargetFile . fileKeyToPath) where
         first unlines $ fromClassFile cf
       
     Nothing
-      | isJar fp -> handle (\(SomeException _) -> return $ MetaData bst) $ do
-        d1 <-
-          maybe (fail "Jar contains external links") return
-          <$> followInternalLinks
-          .   directory
-          $   toArchive bst
-          ^.  files
-        d2 <- imapM (readTargetFile . fileKeyToPath) d1
-        return . Jar $ d2 ^?! _Directory
+      | isJar fp && expandJar -> 
+        handle (\(SomeException _) -> return $ MetaData bst) $ do
+          d1 <-
+            maybe (fail "Jar contains external links") return
+            <$> followInternalLinks
+            .   directory
+            $   toArchive bst
+            ^.  files
+          d2 <- imapM (readTargetFile . fileKeyToPath) d1
+          return . Jar $ d2 ^?! _Directory
       | otherwise -> return $ MetaData bst
 
   -- TODO: Maybe model this instead
