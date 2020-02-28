@@ -324,15 +324,13 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
       nnfAfter = 
         flattenNnf . nnfFromStmt . fromStmt 
         . (case idx of 
-            [] -> id :: (Stmt Int -> Stmt Int)
+            [] -> id 
             _:rest -> \s -> 
               s /\ ((tt $ indiciesToVar M.! idx) ==> (tt $ indiciesToVar M.! rest))
           )
+        . (if not isCore then id else \s -> s /\ tt (indiciesToVar M.! idx))
         . runIdentity
-        $ traverseVariables (\f -> pure $ case M.lookup f factsToVar of 
-          Just indicies -> 
-            forall indicies \i -> if cores V.! i then tt i else true
-          _  -> true
+        $ traverseVariables (\f -> pure $ forallOf (ix f.folded) factsToVar \i -> tt i
         ) stmt
 
       showsFact :: Fact -> ShowS
