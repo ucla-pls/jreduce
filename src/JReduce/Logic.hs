@@ -385,10 +385,29 @@ describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
           . mapMaybe (variables V.!?) . IS.toList 
           $ ipfVars ipf'
 
+    costfn =
+      fromIntegral . IS.size . fst . IS.split (V.length variables)
+
+  dumpCore <- view cfgDumpCore 
+  dumpClosures <- view cfgDumpClosures
+  when (dumpCore || dumpClosures) . liftIO $ do
+    let (core, progress) = weightedProgression costfn ipf
+    when dumpCore do
+      LazyText.writeFile (wf </> "core.txt") . LazyText.toLazyText  
+        $ foldMap (\a -> displayShowS (showsVariable variables a) <> "\n") (IS.toList core)
+
+    when dumpClosures do
+      LazyText.writeFile (wf </> "progression.txt") . LazyText.toLazyText  
+        . foldMap (\a -> displayShowS (showListWith (showsVariable variables) $ IS.toList a) <> "\n") 
+        $ progress
+
   return 
-    ( fromIntegral . IS.size . fst. IS.split (V.length variables)
+    ( costfn
     , (fromIpf, ipf)
     )
+
+displayShowS :: ShowS -> Builder.Builder
+displayShowS f = displayString (f "")
 
 
 describeGraphProblem ::
