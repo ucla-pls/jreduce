@@ -398,7 +398,12 @@ describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
 
     when dumpClosures do
       LazyText.writeFile (wf </> "progression.txt") . LazyText.toLazyText  
-        . foldMap (\a -> displayShowS (showListWith (showsVariable variables) $ IS.toList a) <> "\n") 
+        . foldMap 
+          (\a -> (fold 
+            . List.intersperse ", " 
+            . map (displayShowS . showsVariable variables)
+            $ IS.toList a) 
+            <> "\n") 
         $ progress
 
   return 
