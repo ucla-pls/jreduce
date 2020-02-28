@@ -247,7 +247,7 @@ showsVariable :: V.Vector (Fact, [Int]) -> Int -> ShowS
 showsVariable variables i = 
   case variables V.!? i of
     Just (fact, idx) -> 
-      showString (unBuilder $ displayFact fact <> display idx)
+      showString (unBuilder $ displayFact fact <> display (reverse idx))
     Nothing -> 
       shows i
 
@@ -300,12 +300,12 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
 
       whenM (view cfgDumpItems) . liftIO $ do 
         LazyText.appendFile (wf </> "items.txt") . LazyText.toLazyText  
-          $ displayText key <> " " <> display idx <> " " <> display v <> "\n" 
+          $ displayText key <> display (reverse idx) <> "\n" 
         LazyText.appendFile (wf </> "items-logical.txt") . LazyText.toLazyText  
-          $ displayText key <> " " <> display idx <> " " <> display v <> "\n" 
+          $ displayText key <> display (reverse idx) <> " " <> display v <> "\n" 
           <> "  BEF " <> displayString (showsNnfWith showsFact nnf "\n") 
           <> "  AFT " <> displayString (showsNnfWith (showsVariable variables) nnfAfter "\n")
-          <> foldMap (("   " <>) . displayClause) (cnfClauses cnf)
+          <> foldMap (("  " <>) . displayClause) (cnfClauses cnf)
 
       return cnf
      where
@@ -338,12 +338,8 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
       showsFact :: Fact -> ShowS
       showsFact = showString . unBuilder . displayFact
 
-      displayVariableLookup a = 
-        maybe (shows a) (\f -> showString . unBuilder $ displayFact f)  
-        $ facts V.!? a
-
       displayClause c = 
-        displayString (LS.displayImplication displayVariableLookup c "\n")
+        displayString (LS.displayImplication (showsVariable variables) c "\n")
 
   L.info . L.displayf "Found %d items." $ List.length items
   L.info . L.displayf "Found %d facts." $ M.size factsToVar
@@ -384,8 +380,8 @@ describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
       Nothing  -> error "The created CNF was not IPF"
 
     fromIpf :: IPF -> Maybe Target
-    fromIpf ipf' = preview _ITarget . fromJust
-      $ limit (deepReduction itemR) (`S.member` varset) (ITarget s)
+    fromIpf ipf' = preview _ITarget =<<
+      limit (deepReduction itemR) (`S.member` varset) (ITarget s)
       where 
         varset = S.fromList . map snd 
           . mapMaybe (variables V.!?) . IS.toList 
@@ -423,8 +419,8 @@ describeGraphProblem cfg wf p = flip refineProblemA' p \s -> do
 
     core = closure graph (mapMaybe rev $ IS.toList required)
 
-    fromClosures cls = preview _ITarget . fromJust
-      $ limit (deepReduction itemR) (`S.member` varset) (ITarget s)
+    fromClosures cls = preview _ITarget =<<
+      limit (deepReduction itemR) (`S.member` varset) (ITarget s)
       where
         varset = S.fromList . map snd 
           . mapMaybe (variables V.!?) 
