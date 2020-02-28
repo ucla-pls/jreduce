@@ -63,6 +63,7 @@ import JReduce.Target
 import JReduce.Config
 import qualified JReduce.Logic
 import qualified JReduce.Classes
+import JReduce.Logic (LogicConfig (..))
 
 main :: IO ()
 main = do
@@ -106,15 +107,17 @@ run strat = do
     case strat of
       OverClasses b -> do
         p2 <- targetProblem b $ p1
-        runBinary start wf =<< JReduce.Classes.describeProblem wf p2
+        p3 <- JReduce.Classes.describeProblem wf p2
+        runBinary (fromIntegral . IS.size . IS.unions) start wf p3
 
-      OverLogicApprox ext bool -> do
+      OverLogicApprox cfg -> do
         p2 <- targetProblem True $ p1
-        runBinary start wf =<< JReduce.Logic.describeGraphProblem ext bool wf p2
+        (costfn, p3) <- JReduce.Logic.describeGraphProblem cfg wf p2
+        runBinary costfn start wf p3
 
-      OverLogic ext -> do
+      OverLogic cfg -> do
         p2 <- targetProblem True $ p1
-        (costfn, p3) <- JReduce.Logic.describeLogicProblem ext wf p2
+        (costfn, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         (failure, result) <- runReductionProblem start (wf </> "reduction")
           (ipfBinaryReduction costfn)
           . meassure (Count "vars" . maybe 0 (IS.size . ipfVars))
@@ -137,9 +140,9 @@ run strat = do
 
       return (fromJust $ _problemExtractBase p3 result)
       
-    runBinary start wf p3 = do
+    runBinary cost start wf p3 = do
       (failure, result) <- runReductionProblem start (wf </> "reduction")
-        (genericBinaryReduction (IS.size . IS.unions))
+        (genericBinaryReduction cost)
         . meassure (Count "scc" . maybe 0 length)
         $ p3
       checkResults wf p3 (failure, result)
@@ -155,9 +158,9 @@ run strat = do
 
 data Strategy
   = OverClasses Bool
-  | OverLogicApprox Bool Bool
-  | OverLogic Bool
-  deriving (Ord, Eq, Show)
+  | OverLogicApprox LogicConfig
+  | OverLogic LogicConfig
+  deriving (Show)
 
 strategyParser :: Parser Strategy
 strategyParser =
@@ -167,24 +170,18 @@ strategyParser =
   <> metavar "STRATEGY"
   <> hidden
   <> help
-    ( "reduce by different granularity (default: deep)."
-      ++ "Choose between class, stubs, and deep."
+    ( "reduce by different granularity (default: logic)."
+      ++ "Choose between classes, logic, and logic+graph."
     )
-  <> value (OverClasses False)
+  <> value (OverLogicApprox (LogicConfig False))
   where
     strategyReader :: ReadM Strategy
     strategyReader = maybeReader $ \s ->
       case Text.split (=='+') . Text.toLower . Text.pack $ s of
         "classes":[] -> Just $ OverClasses True
-        ["classes", "flat" ] -> Just $ OverClasses False
-        ["logic", "under"] ->
-          Just $ OverLogicApprox False False
-        ["logic", "over"] ->
-          Just $ OverLogicApprox False True
-        ["logic", "extends", "over"] ->
-          Just $ OverLogicApprox True True
-        ["logic"] ->
-          Just $ OverLogic False
-        ["logic", "extends"] ->
-          Just $ OverLogic True
+        ["classes", "flat"] -> Just $ OverClasses False
+        "logic":"graph":rest ->
+          Just $ OverLogicApprox (LogicConfig (rest == ["hierarchy"]))
+        "logic":rest ->
+          Just $ OverLogic (LogicConfig (rest == ["hierarchy"]))
         _ -> Nothing

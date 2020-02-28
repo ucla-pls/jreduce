@@ -59,6 +59,7 @@ import qualified Data.Text                     as Text
 import           Data.Text.Lazy.Builder        as Builder
 import qualified Data.Text.Lazy.Encoding       as LazyText
 import qualified Data.Text.Lazy.IO             as LazyText
+import qualified Data.Text.Lazy                as LazyText
 
 -- nfdata
 import           Control.DeepSeq
@@ -69,7 +70,6 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Data.List                     as List
 import           Data.Maybe
-import           Data.Coerce
 import           Data.Bifunctor
 import           Data.Monoid
 import           Text.Printf
@@ -180,13 +180,13 @@ describeProblemTemplate itemR genKeyFun displayK _ITarget wf p = do
       itemR
       p2
 
-    dumpGraphInfo wf grph coreSet cls
+    dumpGraphInfo wf (grph <&> LazyText.unpack . Builder.toLazyText . displayGraphField . GraphField) coreSet cls
     return p3
 
 dumpGraphInfo
   :: (MonadIOReader Config m)
   => FilePath
-  -> Control.Reduce.Graph.Graph b ([Int], Text.Text)
+  -> Control.Reduce.Graph.Graph b String
   -> IS.IntSet
   -> [IS.IntSet]
   -> m ()
@@ -198,7 +198,7 @@ dumpGraphInfo wf grph coreSet cls = do
   whenM (view cfgDumpCore) $ do
     L.phase "Outputing core: " . liftIO $ do
       LazyText.writeFile (wf </> "core.txt") . Builder.toLazyText $ foldMap
-        (\x -> (displayGraphField . GraphField $ nodeLabels grph V.! x) <> "\n")
+        (\x -> (displayString $ nodeLabels grph V.! x) <> "\n")
         (IS.toList coreSet)
 
   whenM (view cfgDumpClosures) $ do
@@ -209,7 +209,7 @@ dumpGraphInfo wf grph coreSet cls = do
           . Builder.toLazyText
           $ foldMap
               (\x ->
-                (displayGraphField . GraphField $ nodeLabels grph V.! x) <> "\n"
+                (displayString $ nodeLabels grph V.! x) <> "\n"
               )
               (IS.toList c)
 
@@ -217,10 +217,7 @@ dumpGraphInfo wf grph coreSet cls = do
     L.phase "Outputing graph: " . liftIO $ do
       BL.writeFile (wf </> "graph.csv")
         . writeCSV
-        $ (coerce . first (const ("" :: Text.Text)) $ grph :: Control.Reduce.Graph.Graph
-              Text.Text
-              GraphField
-          )
+        $ first (const ([] :: String)) grph
 
 targetClasses :: Target -> [Class]
 targetClasses = toListOf (folded . go)

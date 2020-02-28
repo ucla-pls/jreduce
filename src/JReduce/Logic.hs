@@ -32,8 +32,9 @@ import qualified Data.Vector as V
 -- base
 import Data.Foldable hiding (and, or)
 import Data.Maybe
+import Data.IORef
+import Data.Tuple
 import Data.Char (isNumber)
-import Data.Bool (bool)
 import Data.Monoid
 import Text.Show
 import Control.Monad
@@ -51,12 +52,6 @@ import qualified Jvmhs
 
 -- containers
 import qualified Data.IntMap.Strict            as IntMap
-
--- bytestring
-import qualified Data.ByteString.Lazy as BL
-
--- aeson
-import Data.Aeson (encode)
 
 -- nfdata
 import           Control.DeepSeq
@@ -77,6 +72,7 @@ import qualified Data.Text.Lazy.Builder        as Builder
 
 -- reduce-util
 import Control.Reduce.Boolean
+import Control.Reduce.Graph
 import Control.Reduce.Boolean.CNF
 import qualified Control.Reduce.Boolean.LiteralSet as LS
 import Control.Reduce.Problem
@@ -243,216 +239,218 @@ itemR f' = \case
       -- &  methodExceptions
       -- .~ _methodThrows
 
+      
+unBuilder :: Builder.Builder -> String
+unBuilder = LazyText.unpack . Builder.toLazyText
+
+showsVariable :: V.Vector (Fact, [Int]) -> Int -> ShowS
+showsVariable variables i = 
+  case variables V.!? i of
+    Just (fact, idx) -> 
+      showString (unBuilder $ displayFact fact <> display idx)
+    Nothing -> 
+      shows i
+
+initializeKeyFunction :: 
+  forall m. MonadIOReader Config m 
+  => LogicConfig -> Target -> FilePath -> m (V.Vector (Fact, [Int]), Int, ([Int], Item) -> m CNF)
+initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
+  lfn  <- logic cfg <$> fetchHierachy (targetClasses trg)
+  core <- view cfgCore
+
+  let 
+    items = 
+      itemsOfTarget trg
+   
+    factsToVar :: M.Map Fact (S.Set Int)
+    factsToVar = 
+      M.fromListWith S.union 
+        [ (f, S.singleton i) 
+        | (i, f) <- V.toList (V.indexed facts) 
+        ]
+
+    back :: V.Vector ([Int], Item)
+    back = 
+      V.fromList items
+    
+    facts :: V.Vector Fact
+    facts =
+      V.map (fst . lfn . snd) back
+
+    variables :: V.Vector (Fact, [Int])
+    variables = V.zip facts (V.map fst back)
+
+    cores :: V.Vector Bool
+    cores = 
+      V.map (\fact-> serializeWith displayFact fact `HS.member` core) facts
+
+    indiciesToVar :: M.Map [Int] Int
+    indiciesToVar =
+      M.fromList (map swap . V.toList . V.indexed . V.map fst $ back)
+  
+  maxid <- liftIO $ newIORef (V.length back)
+
+  let
+    handler :: ([Int], (Fact, Stmt Fact)) -> m CNF 
+    handler (idx, (fact, stmt)) = L.logtime L.DEBUG ("Processing " <> debuginfo) $ do
+      mid <- liftIO $ readIORef maxid 
+      let cnf = toMinimalCNF mid nnfAfter
+      liftIO $ writeIORef maxid 
+        (max mid . maybe minBound fst . IS.maxView $ cnfVariables cnf)
+
+      whenM (view cfgDumpItems) . liftIO $ do 
+        LazyText.appendFile (wf </> "items.txt") . LazyText.toLazyText  
+          $ displayText key <> " " <> display idx <> " " <> display v <> "\n" 
+        LazyText.appendFile (wf </> "items-logical.txt") . LazyText.toLazyText  
+          $ displayText key <> " " <> display idx <> " " <> display v <> "\n" 
+          <> "  BEF " <> displayString (showsNnfWith showsFact nnf "\n") 
+          <> "  AFT " <> displayString (showsNnfWith (showsVariable variables) nnfAfter "\n")
+          <> foldMap (("   " <>) . displayClause) (cnfClauses cnf)
+
+      return cnf
+     where
+      v   = indiciesToVar M.! idx
+      key = serializeWith displayFact fact
+      isCore = cores V.! v
+      
+      debuginfo = 
+        displayText key <> (if isCore then " CORE" else "")
+
+      nnf :: Nnf Fact
+      nnf = 
+        flattenNnf . nnfFromStmt . fromStmt $ stmt
+
+      nnfAfter :: Nnf Int
+      nnfAfter = 
+        flattenNnf . nnfFromStmt . fromStmt 
+        . (case idx of 
+            [] -> id :: (Stmt Int -> Stmt Int)
+            _:rest -> \s -> 
+              s /\ ((tt $ indiciesToVar M.! idx) ==> (tt $ indiciesToVar M.! rest))
+          )
+        . runIdentity
+        $ traverseVariables (\f -> pure $ case M.lookup f factsToVar of 
+          Just indicies -> 
+            forall indicies \i -> if cores V.! i then tt i else true
+          _  -> true
+        ) stmt
+
+      showsFact :: Fact -> ShowS
+      showsFact = showString . unBuilder . displayFact
+
+      displayVariableLookup a = 
+        maybe (shows a) (\f -> showString . unBuilder $ displayFact f)  
+        $ facts V.!? a
+
+      displayClause c = 
+        displayString (LS.displayImplication displayVariableLookup c "\n")
+
+  L.info . L.displayf "Found %d items." $ List.length items
+  L.info . L.displayf "Found %d facts." $ M.size factsToVar
+  L.info . L.displayf "The core is %d of them." $ List.length core
+
+  mid <- liftIO $ readIORef maxid
+  return (variables, mid, handler . over _2 lfn) 
+
+ where 
+  itemsOfTarget :: Target -> [([Int], Item)]
+  itemsOfTarget = itoListOf (deepSubelements itemR) . review _ITarget
+
+computeCNF :: MonadIOReader Config m => (Int -> ShowS) -> (a -> m CNF) -> FilePath -> [a] -> m CNF
+computeCNF sv keyFun wf items = L.phase "Compute CNF" do 
+  cnf <- CNF . foldMap cnfClauses <$> mapM keyFun items
+  whenM (view cfgDumpLogic) . liftIO $ do
+    LazyText.appendFile (wf </> "cnf.txt") 
+    . LazyText.toLazyText  
+    $ foldMap (\c -> displayString $ LS.displayImplication sv
+               c "\n") (cnfClauses cnf)
+  return cnf
 
 describeLogicProblem :: 
+  forall a m.
   MonadIOReader Config m
-  => Bool
-  -- ^ Keep hierarchy
+  => LogicConfig
   -> FilePath 
   -> Problem a Target
   -> m (IS.IntSet -> Double, Problem a IPF)
-describeLogicProblem hier wf p =  do
-  let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
-  (keyFun :: Item -> (Fact, Stmt Fact), _) <- L.phase "Initializing key function" $ do
-      let targets = targetClasses $ _problemInitial p
-      let scope = S.fromList ( map (view className) targets)
-      hry <- fetchHierachy targets
-      pure . (,scope) $ logic (LogicConfig { keepHierarchy = hier }) hry
-  
-  L.phase "Precalculating the Reduction" $ do
-    core <- view cfgCore
-    L.info . L.displayf "Requiring %d core items." $ List.length core
-  
-    let removeables :: S.Set Fact 
-            = S.fromList $ map 
-              (fst . keyFun) 
-              (toListOf (deepSubelements itemR) (_problemInitial p2))
+describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
+  (variables, _, keyFun) <- initializeKeyFunction cfg s wf
+  cnf <- computeCNF (showsVariable variables) keyFun wf
+    $ itoListOf (deepSubelements itemR) (ITarget s)
 
-    ((cnf, v), p3) <- toLogicReductionM (handler removeables core . keyFun) itemR p2
-    
-    let required = M.fromList . map (over _2 (LazyText.unpack . Builder.toLazyText . displayFact . fst . keyFun))
-                  . itoListOf (deepSubelements itemR)  
-                  $ _problemInitial p2
+  let 
+    ipf = case fromCNF $ cnf of
+      Just ipf' -> ipf'
+      Nothing  -> error "The created CNF was not IPF"
 
-    let 
-      renderIndex a = maybe (shows a) (shows) $ v V.!? a
-      renderVar a = maybe (shows a) (showString . fromJust . flip M.lookup required) $ v V.!? a
-    
-    -- dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
-    whenM (view cfgDumpLogic) . liftIO $ do
-      LazyText.appendFile (wf </> "cnf.txt") . LazyText.toLazyText  
-       $ foldMap (\c ->  displayString $ LS.displayImplication renderVar c "\n") 
-       (cnfClauses cnf)
-    
-    whenM (view cfgDumpLogic) . liftIO $ do
-      LazyText.appendFile (wf </> "memorizer.txt") . LazyText.toLazyText  
-       $ foldMap (\c ->  displayString (shows c "\n")) v
-    
-    whenM (view cfgDumpLogic) . liftIO $ do
-      let 
-        (a, x) = weightedProgression
-          (fromIntegral . IS.size . fst . IS.split (V.length v)) 
-          (fromJust $ fromCNF cnf)
-        displaySet a' = 
-          displayString 
-            ( showListWith renderVar (IS.toList a') 
-            . showString " - "
-            . showListWith renderIndex (IS.toList a') 
-            . showString " - "
-            . showListWith shows (IS.toList a') $ "\n"
-            )
-            -- . showString " - "
-            -- . showListWith shows (IS.toList ab) $ "\n")
-          -- <> foldMap (\c ->  displayString $ LS.displayImplication shows c "\n") cnf'
-      LazyText.appendFile (wf </> "firstround.txt") . LazyText.toLazyText 
-        $ displaySet a <> foldMap displaySet x
+    fromIpf :: IPF -> Maybe Target
+    fromIpf ipf' = preview _ITarget . fromJust
+      $ limit (deepReduction itemR) (`S.member` varset) (ITarget s)
+      where 
+        varset = S.fromList . map snd 
+          . mapMaybe (variables V.!?) . IS.toList 
+          $ ipfVars ipf'
 
-   
-    return (fromIntegral . IS.size . fst . IS.split (V.length v), p3)
- 
- where 
-  -- handler :: S.Set Fact -> HS.HashSet Text.Text -> (Fact, Stmt Fact) -> m (Fact, Bool, [(Fact, Fact)])
-  handler removeables core (key, sentence) = do
-    let txt = serializeWith displayFact key
-        isCore = txt `HS.member` core
+  return 
+    ( fromIntegral . IS.size . fst. IS.split (V.length variables)
+    , (fromIpf, ipf)
+    )
 
-    let debuginfo = displayText txt 
-              <> (if isCore then " CORE" else "")
-
-    -- Ensure that the sentence have been evalutated
-    L.logtime L.DEBUG ("Processing " <> debuginfo) $ deepseq sentence (pure ())
-    
-    whenM (view cfgDumpLogic) . liftIO $ do
-      let filename = wf </> "nnf.json" 
-      BL.appendFile filename (encode (fmap (Builder.toLazyText . displayFact) sentence) <> "\n")
-
-    whenM (view cfgDumpItems) . liftIO $ do
-      let nnf = Builder.toLazyText . displayFact <$> (flattenNnf . nnfFromStmt . fromStmt $ sentence)
-      let nnfAfter = Builder.toLazyText . displayFact <$> (flattenNnf . nnfFromStmt . fromStmt . runIdentity  $ traverseVariables 
-            (\n -> if n `S.member` removeables
-              then
-                pure $ tt n  
-              else do
-                -- L.warn ("Did not find " <> displayFact n)
-                pure $ true
-            )
-            sentence)
-      let (nnf', back) = memorizeNnf nnfAfter
-      let cnf = toMinimalCNF (maxVariable nnf') nnf'
-      let filename = wf </> "items.txt" 
-      LazyText.appendFile filename . LazyText.toLazyText  
-       $ displayText txt <> "\n" 
-          <> "  BEF " 
-            <> displayString (show nnf) <> "\n" 
-          <> "  AFT " 
-            <> displayString (show nnfAfter) <> "\n" 
-          <> foldMap (\c ->
-                displayString "  " <> 
-                ( displayString $ 
-                  LS.displayImplication (\a -> maybe (shows a) (showString . LazyText.unpack) $ back V.!? a) c "\n"
-                )
-            ) (cnfClauses cnf)
-                  
-       
-
-    return (key, (if isCore then tt key else true) /\ sentence)-- isCore, [ (a, b) | DDeps a b <- edges ])
 
 describeGraphProblem ::
   MonadIOReader Config m
-  => Bool 
-  -- ^ Keep hierarchy
-  -> Bool
-  -- ^ Is overapproximation 
+  => LogicConfig
   -> FilePath
   -> Problem a Target
-  -> m (Problem a [IS.IntSet])
-describeGraphProblem hier isOver wf p = do
-  -- describeProblemTemplate itemR genKeyFun displayFact _ITarget wf p
-  let p2 = liftProblem (review _ITarget) (fromJust . preview _ITarget) p
-  (keyFun :: Item -> (Fact, Stmt Fact), _) <- L.phase "Initializing key function" $ do
-      let targets = targetClasses $ _problemInitial p
-      let scope = S.fromList ( map (view className) targets)
-      hry <- fetchHierachy targets
-      pure . (,scope) $ logic (LogicConfig { keepHierarchy = hier }) hry
+  -> m ([IS.IntSet] -> Double, Problem a [IS.IntSet])
+describeGraphProblem cfg wf p = flip refineProblemA' p \s -> do
+  (variables, mid, keyFun) <- initializeKeyFunction cfg s wf
+  cnf <- computeCNF (showsVariable variables) keyFun wf
+    $ itoListOf (deepSubelements itemR) (ITarget s)
 
-  L.phase "Precalculating the Reduction" $ do
-    core <- view cfgCore
-    L.info . L.displayf "Requiring %d core items." $ List.length core
+  let 
+    (required, edges') = fold 
+      [ case over both IS.minView $ LS.splitLiterals clause of 
+          (Nothing    , Just (t, _)) -> (IS.singleton t, mempty)
+          (Just (f, _), Just (t, _)) -> (mempty, S.singleton (f,t))
+          _                          -> error "CNF is not IPF"
+      | clause <- S.toList $ cnfClauses cnf 
+      ]
 
-    let removeables :: S.Set Fact 
-          = S.fromList $ map 
-            (fst . keyFun) 
-            (toListOf (deepSubelements itemR) (_problemInitial p2))
+    (graph, rev) = buildGraphFromNodesAndEdges 
+      [(k,k) | k <- [0..mid - 1]] 
+      [Edge () f t | (f, t) <- S.toList edges']
 
-    ((grph, coreSet, closures), p3) <- 
-      toGraphReductionDeepM (handler removeables core . keyFun) itemR p2
+    core = closure graph (mapMaybe rev $ IS.toList required)
+
+    fromClosures cls = preview _ITarget . fromJust
+      $ limit (deepReduction itemR) (`S.member` varset) (ITarget s)
+      where
+        varset = S.fromList . map snd 
+          . mapMaybe (variables V.!?) 
+          . map (nodeLabel . (nodes graph V.!))
+          . IS.toList . IS.unions
+          $ core:cls
+
+    _targets =
+      filter (not . IS.null)
+      . map (IS.\\ core)
+      $ closures graph
     
-    dumpGraphInfo wf (grph <&> over _2 (serializeWith displayFact)) coreSet closures
-    
-    whenM (view cfgDumpLogic) . liftIO $ do
-      let m :: M.Map [Int] Fact = fmap (fst . keyFun) 
-            $ M.fromList (itoListOf (deepSubelements itemR) (_problemInitial p2))
-      let filename = wf </> "nnf.json" 
-      BL.appendFile filename 
-        (encode (Builder.toLazyText . displayFact <$>
-          (flattenNnf $ and [ tt f ==> tt (m ^?! ix rs) | (_:rs, f) <- M.toList m ])  
-          ) <> "\n")
-   
-    return p3
+  dumpGraphInfo wf 
+    (graph <&> flip (showsVariable variables) "")
+    core _targets
 
- where 
-  -- handler :: S.Set Fact -> HS.HashSet Text.Text -> (Fact, Stmt Fact) -> m (Fact, Bool, [(Fact, Fact)])
-  {-# SCC handler #-}
-  handler removeables core (key, sentence) = do
-    let txt = serializeWith displayFact key
-        isCore = txt `HS.member` core
-
-    let debuginfo = displayText txt 
-              <> (if isCore then " CORE" else "")
-
-    -- Ensure that the sentence have been evalutated
-    L.logtime L.DEBUG ("Processing " <> debuginfo) $ deepseq sentence (pure ())
-
-    let nnf = flattenNnf . nnfFromStmt . fromStmt . runIdentity  $ traverseVariables 
-          (\n -> if n `S.member` removeables
-            then
-              pure $ tt n  
-            else do
-              -- L.warn ("Did not find " <> displayFact n)
-              pure $ true
-          )
-          sentence
-
-    let edges = if isOver
-          then overDependencies nnf
-          else underDependencies nnf
-    
-    whenM (view cfgDumpLogic) . liftIO $ do
-      let filename = wf </> "nnf.json" 
-      BL.appendFile filename (encode (fmap (Builder.toLazyText . displayFact) nnf) <> "\n")
-
-    whenM (view cfgDumpItems) . liftIO $ do
-      let filename = wf </> "items.txt" 
-      LazyText.appendFile filename . LazyText.toLazyText  
-       $ displayText txt <> "\n" 
-          <> "  BEF " 
-            <> displayString (show (fmap displayFact (flattenNnf . nnfFromStmt . fromStmt $ sentence))) <> "\n" 
-          <> "  AFT " <> displayString (show (fmap displayFact nnf)) <> "\n"
-          <> foldMap (\a -> 
-            "  " <> case a of 
-                 DDeps x y -> "DEP " <> displayFact x <> " ~~> " <> displayFact y
-                 DLit  (Literal b x)  -> "LIT " <> bool "! " "" b <> displayFact x
-                 DFalse  -> "FLS "
-            <> "\n") 
-            edges
-       
-
-    return (key, isCore, [ (a, b) | DDeps a b <- edges ])
-
+  return 
+    ( fromIntegral . IS.size . fst 
+      . IS.split (V.length variables) 
+      . IS.unions
+    , (fromClosures, _targets)
+    )
 
 data LogicConfig = LogicConfig
   { keepHierarchy :: Bool
-  }
+  } deriving (Eq, Show)
 
 logic :: LogicConfig -> Hierarchy -> Item -> (Fact, Stmt Fact)
 logic LogicConfig{..} hry = \case
