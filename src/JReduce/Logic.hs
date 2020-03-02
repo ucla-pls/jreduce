@@ -583,14 +583,15 @@ logic LogicConfig{..} hry = \case
         \(def, isAbstract, path) ->
           given (not isAbstract)
           $ m /\ unbrokenPath path
-          ==> requireMethod hry cls (mkAbsMethodId def method)
+          ==> requireNonAbstractMethod hry cls (mkAbsMethodId def method)
       else
       -- If the methods is not abstract, make sure that the method defintion
       -- does exist. A chain from A <: I <: !I. If I does not exit, either
       -- this method have to stay or we have to remove the implements interface.
       forall (superDeclarationPaths (mkAbsMethodId cls method) hry)
         \(decl, isAbstract, path) -> given isAbstract
-          $ methodExist decl /\ unbrokenPath path ==> m
+          $ methodExist decl /\ unbrokenPath path ==> 
+            requireNonAbstractMethod hry cls (mkAbsMethodId cls method)
 
     , m ==> requireClassNamesOf cls (methodDefaultAnnotation._Just) method
 
@@ -921,6 +922,12 @@ requireMethod :: HasClassName c => Hierarchy -> c -> AbsMethodId -> Stmt Fact
 requireMethod hry cn mid = isInnerClassOf cn mid /\ or
   [ methodExist mid' /\ unbrokenPath path
   | (mid', _, path) <- superDeclarationPaths mid hry
+  ]
+
+requireNonAbstractMethod :: HasClassName c => Hierarchy -> c -> AbsMethodId -> Stmt Fact
+requireNonAbstractMethod hry cn mid = isInnerClassOf cn mid /\ or
+  [ methodExist mid' /\ unbrokenPath path
+  | (mid', False, path) <- superDeclarationPaths mid hry
   ]
 
 codeIsUntuched :: AbsMethodId -> Stmt Fact
