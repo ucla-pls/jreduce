@@ -350,7 +350,13 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
   itemsOfTarget :: Target -> [([Int], Item)]
   itemsOfTarget = itoListOf (deepSubelements itemR) . review _ITarget
 
-computeCNF :: MonadIOReader Config m => (Int -> ShowS) -> (a -> m CNF) -> FilePath -> [a] -> m CNF
+computeCNF :: 
+  MonadIOReader Config m 
+  => (Int -> ShowS) 
+  -> (a -> m CNF) 
+  -> FilePath 
+  -> [a] 
+  -> m CNF
 computeCNF sv keyFun wf items = L.phase "Compute CNF" do 
   cnf <- CNF . foldMap cnfClauses <$> mapM keyFun items
   whenM (view cfgDumpLogic) . liftIO $ do
@@ -366,7 +372,7 @@ describeLogicProblem ::
   => LogicConfig
   -> FilePath 
   -> Problem a Target
-  -> m (IS.IntSet -> Double, Problem a IPF)
+  -> m (IPF, Problem a IS.IntSet)
 describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
   (variables, _, keyFun) <- initializeKeyFunction cfg s wf
   cnf <- computeCNF (showsVariable variables) keyFun wf
@@ -377,13 +383,14 @@ describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
       Just ipf' -> ipf'
       Nothing  -> error "The created CNF was not IPF"
 
-    fromIpf :: IPF -> Maybe Target
-    fromIpf ipf' = preview _ITarget =<<
+    fromVars :: IS.IntSet -> Maybe Target
+    fromVars vars = preview _ITarget =<<
       limit (deepReduction itemR) (`S.member` varset) (ITarget s)
       where 
         varset = S.fromList . map snd 
-          . mapMaybe (variables V.!?) . IS.toList 
-          $ ipfVars ipf'
+          . mapMaybe (variables V.!?) 
+          . IS.toList 
+          $ vars
 
     costfn =
       fromIntegral . IS.size . fst . IS.split (V.length variables)
@@ -407,21 +414,28 @@ describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
         $ progress
 
   return 
-    ( costfn
-    , (fromIpf, ipf)
+    ( ipf
+    , (fromVars, ipfVars ipf)
     )
+
+approxLogicProblem :: 
+  IPF 
+  -> Problem a IS.IntSet
+  -> Problem a [Int]
+approxLogicProblem ipf = 
+  liftProblem (IS.toList) (fasterLWCC ipf . IS.fromList)
+
 
 displayShowS :: ShowS -> Builder.Builder
 displayShowS f = displayString (f "")
-
 
 describeGraphProblem ::
   MonadIOReader Config m
   => LogicConfig
   -> FilePath
   -> Problem a Target
-  -> m ([IS.IntSet] -> Double, Problem a [IS.IntSet])
-describeGraphProblem cfg wf p = flip refineProblemA' p \s -> do
+  -> m (Problem a [IS.IntSet])
+describeGraphProblem cfg wf p = flip refineProblemA p \s -> do
   (variables, mid, keyFun) <- initializeKeyFunction cfg s wf
   cnf <- computeCNF (showsVariable variables) keyFun wf
     $ itoListOf (deepSubelements itemR) (ITarget s)
@@ -459,12 +473,10 @@ describeGraphProblem cfg wf p = flip refineProblemA' p \s -> do
     (graph <&> flip (showsVariable variables) "")
     core _targets
 
-  return 
-    ( fromIntegral . IS.size . fst 
-      . IS.split (V.length variables) 
-      . IS.unions
-    , (fromClosures, _targets)
-    )
+  -- ( fromIntegral . IS.size . fst 
+  --     . IS.split (V.length variables) 
+  --     . IS.unions
+  return (fromClosures, _targets)
 
 data LogicConfig = LogicConfig
   { keepHierarchy :: Bool

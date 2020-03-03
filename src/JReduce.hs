@@ -108,19 +108,35 @@ run strat = do
       OverClasses b -> do
         p2 <- targetProblem b $ p1
         p3 <- JReduce.Classes.describeProblem wf p2
-        runBinary (fromIntegral . IS.size . IS.unions) start wf p3
+        runBinary start wf 
+          . meassure (Count "scc" . maybe 0 length)
+          . set problemCost (fromIntegral . IS.size . IS.unions) 
+          $ p3
 
+      OverLogicGraph cfg -> do
+        p2 <- targetProblem True $ p1
+        p3 <- JReduce.Logic.describeGraphProblem cfg wf p2
+        runBinary start wf 
+          . meassure (Count "scc" . maybe 0 length)
+          . set problemCost (fromIntegral . IS.size . IS.unions) 
+          $ p3
+      
       OverLogicApprox cfg -> do
         p2 <- targetProblem True $ p1
-        (costfn, p3) <- JReduce.Logic.describeGraphProblem cfg wf p2
-        runBinary costfn start wf p3
+        (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        runBinary start wf 
+          . JReduce.Logic.approxLogicProblem ipf
+          . meassure (Count "vars" . maybe 0 IS.size)
+          . set problemCost (fromIntegral . IS.size) 
+          $ p3
 
       OverLogic cfg -> do
         p2 <- targetProblem True $ p1
-        (costfn, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         (failure, result) <- runReductionProblem start (wf </> "reduction")
-          (ipfBinaryReduction costfn)
-          . meassure (Count "vars" . maybe 0 (IS.size . ipfVars))
+          (ipfBinaryReduction ipf)
+          . meassure (Count "vars" . maybe 0 IS.size)
+          . set problemCost (fromIntegral . IS.size)
           $ p3
         checkResults wf p3 (failure, result)
 
@@ -140,10 +156,9 @@ run strat = do
 
       return (fromJust $ _problemExtractBase p3 result)
       
-    runBinary cost start wf p3 = do
+    runBinary start wf p3 = do
       (failure, result) <- runReductionProblem start (wf </> "reduction")
-        (genericBinaryReduction cost)
-        . meassure (Count "scc" . maybe 0 length)
+        genericBinaryReduction
         $ p3
       checkResults wf p3 (failure, result)
 
@@ -158,6 +173,7 @@ run strat = do
 
 data Strategy
   = OverClasses Bool
+  | OverLogicGraph LogicConfig
   | OverLogicApprox LogicConfig
   | OverLogic LogicConfig
   deriving (Show)
@@ -181,6 +197,8 @@ strategyParser =
         "classes":[] -> Just $ OverClasses True
         ["classes", "flat"] -> Just $ OverClasses False
         "logic":"graph":rest ->
+          Just $ OverLogicGraph (LogicConfig (rest == ["hierarchy"]))
+        "logic":"approx":rest ->
           Just $ OverLogicApprox (LogicConfig (rest == ["hierarchy"]))
         "logic":rest ->
           Just $ OverLogic (LogicConfig (rest == ["hierarchy"]))
