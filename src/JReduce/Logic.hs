@@ -496,7 +496,7 @@ logic LogicConfig{..} hry = \case
     , -- If the class is a enum, it needs to extend java.lang.Enum and have 
       -- these methods and fields
       given (cls^.classAccessFlags.contains CEnum) $ c ==> 
-        hasSuperClass (cls^.className) "java/lang/Enum"
+        requireSubclass hry (cls^.className) "java/lang/Enum"
         /\ ( requireMethod hry cls . mkAbsMethodId cls
            $ "values" 
            <:> MethodDescriptor [] 
@@ -882,6 +882,10 @@ isSubclass :: ClassName -> ClassName -> HEdge -> Stmt Fact
 isSubclass cn1 cn2 = \case
   Implement -> hasInterface cn1 cn2
   Extend -> hasSuperClass cn1 cn2
+
+requireSubclass :: Hierarchy -> ClassName -> ClassName -> Stmt Fact
+requireSubclass hry s t = 
+  and [ unbrokenPath path | path <- subclassPaths s t hry ]
 
 hasInterface :: ClassName -> ClassName -> Stmt Fact
 hasInterface cn1 cn2 = tt (HasInterface cn1 cn2)
