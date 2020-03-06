@@ -303,8 +303,9 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
           $ displayText key <> display (reverse idx) <> "\n" 
         LazyText.appendFile (wf </> "items-logical.txt") . LazyText.toLazyText  
           $ displayText key <> display (reverse idx) <> " " <> display v <> "\n" 
-          <> "  BEF " <> displayString (showsNnfWith showsFact nnf "\n") 
-          <> "  AFT " <> displayString (showsNnfWith (showsVariable variables) nnfAfter "\n")
+          <> "  LV1 " <> displayString (showsStmtWith showsFact stmt "\n") 
+          <> "  LV2 " <> displayString (showsNnfWith showsFact nnf "\n") 
+          <> "  LV3 " <> displayString (showsNnfWith (showsVariable variables) nnfAfter "\n")
           <> foldMap (("  " <>) . displayClause) (cnfClauses cnf)
 
       return cnf
@@ -496,21 +497,19 @@ logic LogicConfig{..} hry = \case
     , -- If the class is a enum, it needs to extend java.lang.Enum and have 
       -- these methods and fields
       given (cls^.classAccessFlags.contains CEnum) $ c ==> 
-        hasSuperClass (cls^.className) "java/lang/Enum"
-        /\ ( requireMethod hry cls . mkAbsMethodId cls
-           $ "values" 
-           <:> MethodDescriptor [] 
-            (ReturnDescriptor . Just . JTRef . JTArray .JTRef . JTClass $ cls^.className)
-           )
-        /\ ( requireMethod hry cls . mkAbsMethodId cls
-           $ "valueOf" 
-          <:> MethodDescriptor ["Ljava/lang/String;"] 
-            (ReturnDescriptor . Just . JTRef . JTClass $ cls^.className)
-           )
-        /\ ( requireField hry cls . mkAbsFieldId cls 
-           $ "$VALUES" 
+        requireSubclass hry (cls^.className) "java/lang/Enum"
+        /\ given (cls^?classSuper._Just.simpleType == Just "java/lang/Enum") 
+        ( and 
+          [ requireMethod hry cls . mkAbsMethodId cls $ "values" 
+             <:> MethodDescriptor [] 
+              (ReturnDescriptor . Just . JTRef . JTArray .JTRef . JTClass $ cls^.className)
+          , requireMethod hry cls . mkAbsMethodId cls $ "valueOf" 
+            <:> MethodDescriptor ["Ljava/lang/String;"] 
+              (ReturnDescriptor . Just . JTRef . JTClass $ cls^.className)
+          , requireField hry cls . mkAbsFieldId cls $ "$VALUES" 
             <:> FieldDescriptor  (JTRef . JTArray .JTRef . JTClass $ cls^.className)
-           )
+          ]
+        )
 
 
     , -- We also do also not reduce enclosing methods. If a class is enclosed
@@ -882,6 +881,12 @@ isSubclass :: ClassName -> ClassName -> HEdge -> Stmt Fact
 isSubclass cn1 cn2 = \case
   Implement -> hasInterface cn1 cn2
   Extend -> hasSuperClass cn1 cn2
+
+requireSubclass :: Hierarchy -> ClassName -> ClassName -> Stmt Fact
+requireSubclass hry s t = 
+  case t of 
+    "java/lang/Object" -> true
+    _ -> and [ unbrokenPath path | path <- subclassPaths s t hry ]
 
 hasInterface :: ClassName -> ClassName -> Stmt Fact
 hasInterface cn1 cn2 = tt (HasInterface cn1 cn2)
