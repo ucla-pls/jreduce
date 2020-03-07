@@ -129,6 +129,18 @@ run strat = do
           . meassure (Count "vars" . maybe 0 IS.size)
           . set problemCost (fromIntegral . IS.size) 
           $ p3
+      
+      OverLogicDdmin -> do
+        p2 <- targetProblem True $ p1
+        (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        let p4 = JReduce.Logic.approxLogicProblem ipf
+              . meassure (Count "vars" . maybe 0 IS.size)
+              . set problemCost (fromIntegral . IS.size) 
+              $ p3
+        (failure, result) <- runReductionProblem start (wf </> "reduction")
+          (const ddmin)
+          p4
+        checkResults wf p4 (failure, result)
 
       OverLogic -> do
         p2 <- targetProblem True $ p1
@@ -175,6 +187,7 @@ data Strategy
   = OverClasses Bool
   | OverLogicGraph 
   | OverLogicApprox 
+  | OverLogicDdmin
   | OverLogic 
   deriving (Show)
 
@@ -200,6 +213,8 @@ strategyParser =
           Just $ OverLogicGraph 
         "logic+approx" ->
           Just $ OverLogicApprox 
+        "logic+ddmin" ->
+          Just $ OverLogicDdmin
         "logic" ->
           Just $ OverLogic 
         _ -> Nothing
