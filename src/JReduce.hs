@@ -63,7 +63,6 @@ import JReduce.Target
 import JReduce.Config
 import qualified JReduce.Logic
 import qualified JReduce.Classes
-import JReduce.Logic (LogicConfig (..))
 
 main :: IO ()
 main = do
@@ -103,6 +102,7 @@ run strat = do
     p0 <- orFail "Couldn't run problem in time"
       =<< setupProblemFromFile (wf </> "initial") _cfgCmdTemplate _cfgTarget
 
+    cfg <- view cfgLogicConfig
     let p1 = meassure dirTreeMetric p0
     case strat of
       OverClasses b -> do
@@ -113,7 +113,7 @@ run strat = do
           . set problemCost (fromIntegral . IS.size . IS.unions) 
           $ p3
 
-      OverLogicGraph cfg -> do
+      OverLogicGraph -> do
         p2 <- targetProblem True $ p1
         p3 <- JReduce.Logic.describeGraphProblem cfg wf p2
         runBinary start wf 
@@ -121,7 +121,7 @@ run strat = do
           . set problemCost (fromIntegral . IS.size . IS.unions) 
           $ p3
       
-      OverLogicApprox cfg -> do
+      OverLogicApprox -> do
         p2 <- targetProblem True $ p1
         (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         runBinary start wf 
@@ -130,7 +130,7 @@ run strat = do
           . set problemCost (fromIntegral . IS.size) 
           $ p3
 
-      OverLogic cfg -> do
+      OverLogic -> do
         p2 <- targetProblem True $ p1
         (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         (failure, result) <- runReductionProblem start (wf </> "reduction")
@@ -173,9 +173,9 @@ run strat = do
 
 data Strategy
   = OverClasses Bool
-  | OverLogicGraph LogicConfig
-  | OverLogicApprox LogicConfig
-  | OverLogic LogicConfig
+  | OverLogicGraph 
+  | OverLogicApprox 
+  | OverLogic 
   deriving (Show)
 
 strategyParser :: Parser Strategy
@@ -189,17 +189,17 @@ strategyParser =
     ( "reduce by different granularity (default: logic)."
       ++ "Choose between classes, logic, and logic+graph."
     )
-  <> value (OverLogicApprox (LogicConfig False))
+  <> value OverLogic
   where
     strategyReader :: ReadM Strategy
     strategyReader = maybeReader $ \s ->
-      case Text.split (=='+') . Text.toLower . Text.pack $ s of
-        "classes":[] -> Just $ OverClasses True
-        ["classes", "flat"] -> Just $ OverClasses False
-        "logic":"graph":rest ->
-          Just $ OverLogicGraph (LogicConfig (rest == ["hierarchy"]))
-        "logic":"approx":rest ->
-          Just $ OverLogicApprox (LogicConfig (rest == ["hierarchy"]))
-        "logic":rest ->
-          Just $ OverLogic (LogicConfig (rest == ["hierarchy"]))
+      case Text.toLower . Text.pack $ s of
+        "classes" -> Just $ OverClasses True
+        "classes+flat" -> Just $ OverClasses False
+        "logic+graph" ->
+          Just $ OverLogicGraph 
+        "logic+approx" ->
+          Just $ OverLogicApprox 
+        "logic" ->
+          Just $ OverLogic 
         _ -> Nothing

@@ -51,6 +51,13 @@ data DumpConfig = DumpConfig
 
 makeClassy ''DumpConfig
 
+data LogicConfig = LogicConfig
+  { keepHierarchy :: Bool
+  , reverseOrder  :: Bool
+  } deriving (Eq, Show)
+
+makeClassy ''LogicConfig
+
 data Config = Config
   { _cfgLogger           :: !L.LoggerConfig
   , _cfgCore             :: !(HashSet.HashSet Text.Text)
@@ -61,6 +68,7 @@ data Config = Config
   , _cfgOutput           :: !(Maybe FilePath)
   , _cfgReducerName      :: !ReducerName
   , _cfgWorkFolder       :: !WorkFolder
+  , _cfgLogicConfig      :: !LogicConfig
   , _cfgDump             :: !DumpConfig
   , _cfgPredicateOptions :: !PredicateOptions
   , _cfgReductionOptions :: !ReductionOptions
@@ -210,6 +218,21 @@ configParser = do
 
   _cfgWorkFolder <-
     parseWorkFolder "jreduce"
+  
+  _cfgLogicConfig <- do 
+    keepHierarchy <- switch $ long "keep-hierarchy"
+      <> hidden
+      <> help 
+      ( "do not reduce the class hierarchy"
+      )
+    
+    reverseOrder <- switch $ long "reverse-order"
+      <> hidden
+      <> help 
+      ( "reverse the order of the variables"
+      )
+
+    pure $ LogicConfig {..}
 
   _cfgReducerName <-
     parseReducerName

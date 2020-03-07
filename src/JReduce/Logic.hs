@@ -260,7 +260,8 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
 
   let 
     items = 
-      itemsOfTarget trg
+      (if reverseOrder cfg then reverse else id)
+      (itemsOfTarget trg)
    
     factsToVar :: M.Map Fact (S.Set Int)
     factsToVar = 
@@ -479,9 +480,6 @@ describeGraphProblem cfg wf p = flip refineProblemA p \s -> do
   --     . IS.unions
   return (fromClosures, _targets)
 
-data LogicConfig = LogicConfig
-  { keepHierarchy :: Bool
-  } deriving (Eq, Show)
 
 logic :: LogicConfig -> Hierarchy -> Item -> (Fact, Stmt Fact)
 logic LogicConfig{..} hry = \case
@@ -510,8 +508,6 @@ logic LogicConfig{..} hry = \case
             <:> FieldDescriptor  (JTRef . JTArray .JTRef . JTClass $ cls^.className)
           ]
         )
-
-
     , -- We also do also not reduce enclosing methods. If a class is enclosed
       -- in another class, require that to exist, and if the class is enclosed
       -- in a method require that to exist.
