@@ -425,7 +425,8 @@ approxLogicProblem ::
   -> Problem a IS.IntSet
   -> Problem a [Int]
 approxLogicProblem ipf = 
-  liftProblem (IS.toList) (fasterLWCC ipf . IS.fromList)
+  liftProblem IS.toList (resolver . IS.fromList)
+  where resolver = fasterLWCC ipf 
 
 
 displayShowS :: ShowS -> Builder.Builder
