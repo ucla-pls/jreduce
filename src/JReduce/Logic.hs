@@ -255,7 +255,7 @@ initializeKeyFunction ::
   forall m. MonadIOReader Config m 
   => LogicConfig -> Target -> FilePath -> m (V.Vector (Fact, [Int]), Int, ([Int], Item) -> m CNF)
 initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
-  lfn  <- logic cfg <$> fetchHierachy (targetClasses trg)
+  lfn  <- logic cfg <$> fetchHierachy wf (targetClasses trg)
   core <- view cfgCore
 
   let 

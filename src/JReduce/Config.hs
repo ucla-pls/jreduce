@@ -35,6 +35,9 @@ import           Control.Reduce.Command
 import qualified Data.Text    as Text
 import qualified Data.Text.IO as Text
 
+-- aeson
+import qualified Data.Aeson
+
 -- unordered-containers
 import qualified Data.HashSet                          as HashSet
 
@@ -46,6 +49,7 @@ data DumpConfig = DumpConfig
   , _cfgDumpClosures     :: !Bool
   , _cfgDumpLogic        :: !Bool
   , _cfgDumpCore         :: !Bool
+  , _cfgDumpStubs        :: !Bool
   , _cfgDumpItems        :: !Bool
   } deriving (Show)
 
@@ -104,8 +108,8 @@ type MonadIOReader env m =
 --   L.debug $ "Found" <-> display numclasses <-> "classes."
 --   return classreader
 
-fetchHierachy :: MonadIOReader Config m => [Class] -> m Hierarchy
-fetchHierachy targets = L.phase "Calculating the hierarchy" $ do
+fetchHierachy :: MonadIOReader Config m => FilePath -> [Class] -> m Hierarchy
+fetchHierachy wf targets = L.phase "Calculating the hierarchy" $ do
   stubsfile <- view cfgStubsFile
   stdlib <- L.phase "Load stdlib stubs" $ do
     r <- view cfgJreFolder
@@ -130,6 +134,10 @@ fetchHierachy targets = L.phase "Calculating the hierarchy" $ do
     hierarchyFromStubsWarn
     (\a -> L.warn $ "Could not find: " <> toBuilder a)
     stubs
+
+  dumpStubs <- view cfgDumpStubs
+  when dumpStubs . L.phase "Dumping stubs" $ do
+    liftIO $ Data.Aeson.encodeFile (wf <> "/stubs.json") stubs
 
   return hry
 
@@ -158,6 +166,10 @@ parseDumpConfig = do
   _dumpLogic <- switch
     $ long "dump-logic" <> hidden
     <> help "dump the logical statement to the workfolder."
+  
+  _dumpStubs <- switch
+    $ long "dump-stubs" <> hidden
+    <> help "dump the hierachy stubs."
 
   return $ DumpConfig
     { _cfgDumpGraph    = _dump || _dumpGraph
@@ -165,6 +177,7 @@ parseDumpConfig = do
     , _cfgDumpCore     = _dump || _dumpCore
     , _cfgDumpItems    = _dump || _dumpItems
     , _cfgDumpLogic    = _dump || _dumpLogic
+    , _cfgDumpStubs    = _dump || _dumpStubs
     }
      
 configParser :: Parser (IO Config)
