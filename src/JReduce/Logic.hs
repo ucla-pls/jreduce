@@ -328,7 +328,7 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
         . (case idx of 
             [] -> id 
             _:rest -> \s -> 
-              s /\ ((tt $ indiciesToVar M.! idx) ==> (tt $ indiciesToVar M.! rest))
+              s /\ (tt (indiciesToVar M.! idx) ==> tt (indiciesToVar M.! rest))
           )
         . (if not isCore then id else \s -> s /\ tt (indiciesToVar M.! idx))
         . runIdentity
@@ -756,7 +756,11 @@ logic LogicConfig{..} hry = \case
           -- For the methods there are three general cases, a regular method call,
           -- a static methods call (no-object) and a dynamic call (no-class).
           methodRequirements
-          /\ (c ==> and [ s `requireSubtype` t | (s, t) <- zip (state ^. tcStack) (reverse stackTypes)])
+          /\ (c ==> and 
+              [ s `requireSubtype` t 
+              | (s, t) <- zip (state ^. tcStack) (reverse stackTypes)
+              ]
+            )
           where
             (methodRequirements, stackTypes) =
               case methodInvokeTypes a of
@@ -768,8 +772,9 @@ logic LogicConfig{..} hry = \case
                         /\ given (
                             ( maybe False (isNumber . fst) . Text.uncons . last . Text.splitOn "$" 
                             $ mid^.className.fullyQualifiedName
-                            ) /\ mid^.className /= cls ^.className
-                          ) (classExist (mid^.className) ==> c)
+                            ) 
+                            /\ mid^.className /= cls ^.className) 
+                          (classExist (mid^.className) ==> c)
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
                     <> (map asTypeInfo $ m^.methodIdArgumentTypes)
                   )
@@ -926,20 +931,26 @@ methodExist :: AbsMethodId -> Stmt Fact
 methodExist f =
   tt (MethodExist f)
 
+
+orFailWith :: String -> [Stmt a] -> Stmt a
+orFailWith f = \case
+  [] -> error f
+  a:as -> foldr (\/) a as
+
 requireField :: HasClassName c => Hierarchy -> c -> AbsFieldId -> Stmt Fact
-requireField hry cn fid = isInnerClassOf cn fid /\ or
+requireField hry cn fid = isInnerClassOf cn fid /\ orFailWith ("Could not find " ++ show fid)
   [ fieldExist fid' /\ unbrokenPath path
   | (fid', path) <- fieldLocationPaths fid hry
   ]
 
 requireMethod :: HasClassName c => Hierarchy -> c -> AbsMethodId -> Stmt Fact
-requireMethod hry cn mid = isInnerClassOf cn mid /\ or
+requireMethod hry cn mid = isInnerClassOf cn mid /\ orFailWith ("Could not find " ++ show mid)
   [ methodExist mid' /\ unbrokenPath path
   | (mid', _, path) <- superDeclarationPaths mid hry
   ]
 
 requireNonAbstractMethod :: HasClassName c => Hierarchy -> c -> AbsMethodId -> Stmt Fact
-requireNonAbstractMethod hry cn mid = isInnerClassOf cn mid /\ or
+requireNonAbstractMethod hry cn mid = isInnerClassOf cn mid /\ orFailWith ("Could not find " ++ show mid)
   [ methodExist mid' /\ unbrokenPath path
   | (mid', False, path) <- superDeclarationPaths mid hry
   ]
