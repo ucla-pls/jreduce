@@ -112,6 +112,19 @@ run strat = do
           . meassure (Count "scc" . maybe 0 length)
           . set problemCost (fromIntegral . IS.size . IS.unions) 
           $ p3
+      
+      OverItemsHdd -> do
+        p2 <- targetProblem True $ p1
+        let p4 = meassure (Count "items" . length)
+              . toReductionDeep JReduce.Logic.itemR 
+              . liftProblem 
+                  (JReduce.Logic.ITarget)
+                  (fromJust . preview JReduce.Logic._ITarget) 
+              $ p2
+        (failure, result) <- runReductionProblem start (wf </> "reduction")
+          (const hdd)
+          p4
+        checkResults wf p4 (failure, result)
 
       OverLogicGraph -> do
         p2 <- targetProblem True $ p1
@@ -185,6 +198,7 @@ run strat = do
 
 data Strategy
   = OverClasses Bool
+  | OverItemsHdd 
   | OverLogicGraph 
   | OverLogicApprox 
   | OverLogicDdmin
@@ -209,6 +223,8 @@ strategyParser =
       case Text.toLower . Text.pack $ s of
         "classes" -> Just $ OverClasses True
         "classes+flat" -> Just $ OverClasses False
+        "items+hdd" ->
+          Just $ OverItemsHdd
         "logic+graph" ->
           Just $ OverLogicGraph 
         "logic+approx" ->
