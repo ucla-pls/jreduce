@@ -19,36 +19,47 @@
 module JReduce.Logic where
 
 -- lens
-import Control.Lens hiding (andOf, orOf, (<.>))
+import           Control.Lens            hiding ( andOf
+                                                , orOf
+                                                , (<.>)
+                                                )
 
 -- containers
-import qualified Data.Set as S
-import qualified Data.Map.Strict as M
-import qualified Data.IntSet as IS
+import qualified Data.Set                      as S
+import qualified Data.Map.Strict               as M
+import qualified Data.IntSet                   as IS
 
 -- vector
-import qualified Data.Vector as V
+import qualified Data.Vector                   as V
 
 -- base
-import Data.Foldable hiding (and, or)
-import Data.Maybe
-import Data.IORef
-import Data.Tuple
-import Data.Char (isNumber)
-import Data.Monoid
-import Text.Show
-import Control.Monad
-import Control.Monad.IO.Class
-import qualified Data.List as List
+import           Data.Foldable           hiding ( and
+                                                , or
+                                                )
+import           Data.Maybe
+import           Data.IORef
+import           Data.Tuple
+import           Data.Char                      ( isNumber )
+import           Data.Monoid
+import           Text.Show
+import           Control.Monad
+import           Control.Monad.IO.Class
+import qualified Data.List                     as List
 import           GHC.Generics                   ( Generic )
-import Prelude hiding (fail, not, and, or)
+import           Prelude                 hiding ( fail
+                                                , not
+                                                , and
+                                                , or
+                                                )
 
 -- jvmhs
-import Jvmhs.Data.Type
-import Jvmhs.TypeCheck
-import Jvmhs.Data.Code
-import Jvmhs hiding (methodExist, fieldExist)
-import qualified Jvmhs 
+import           Jvmhs.Data.Type
+import           Jvmhs.TypeCheck
+import           Jvmhs.Data.Code
+import           Jvmhs                   hiding ( methodExist
+                                                , fieldExist
+                                                )
+import qualified Jvmhs
 
 -- containers
 import qualified Data.IntMap.Strict            as IntMap
@@ -57,34 +68,35 @@ import qualified Data.IntMap.Strict            as IntMap
 import           Control.DeepSeq
 
 -- jvm-binary
-import qualified Language.JVM as B
-import Language.JVM.ByteCode (ByteCodeOpr (..))
+import qualified Language.JVM                  as B
+import           Language.JVM.ByteCode          ( ByteCodeOpr(..) )
 
 -- filepath
-import System.FilePath
+import           System.FilePath
 
 -- text
-import qualified Data.Text as Text 
-import qualified Data.Text.Lazy.IO as LazyText
-import qualified Data.Text.Lazy as LazyText
-import qualified Data.Text.Lazy.Builder as LazyText
+import qualified Data.Text                     as Text
+import qualified Data.Text.Lazy.IO             as LazyText
+import qualified Data.Text.Lazy                as LazyText
+import qualified Data.Text.Lazy.Builder        as LazyText
 import qualified Data.Text.Lazy.Builder        as Builder
 
 -- reduce-util
-import Control.Reduce.Boolean
-import Control.Reduce.Graph
-import Control.Reduce.Boolean.CNF
-import qualified Control.Reduce.Boolean.LiteralSet as LS
-import Control.Reduce.Problem
-import Control.Reduce.Reduction
-import Control.Reduce.Util.Logger as L
+import           Control.Reduce.Boolean
+import           Control.Reduce.Graph
+import           Control.Reduce.Boolean.CNF
+import qualified Control.Reduce.Boolean.LiteralSet
+                                               as LS
+import           Control.Reduce.Problem
+import           Control.Reduce.Reduction
+import           Control.Reduce.Util.Logger    as L
 
 -- unorderd-containers
-import qualified Data.HashSet               as HS
+import qualified Data.HashSet                  as HS
 
 -- jreduce
-import JReduce.Target
-import JReduce.Config
+import           JReduce.Target
+import           JReduce.Config
 
 
 data Item
@@ -97,7 +109,6 @@ data Item
   | IFieldFinal (Class, Field)
   | IMethod (Class, Method)
   | IInnerClass (Class, InnerClass)
-  -- | IMethodThrows ((Class, Method), (Annotated ThrowsType))
   | IBootstrapMethod (Class, (Int, BootstrapMethod))
 
 makePrisms ''Item
@@ -239,7 +250,6 @@ itemR f' = \case
       -- &  methodExceptions
       -- .~ _methodThrows
 
-      
 unBuilder :: Builder.Builder -> String
 unBuilder = LazyText.unpack . Builder.toLazyText
 
@@ -885,10 +895,9 @@ isSubclass cn1 cn2 = \case
   Extend -> hasSuperClass cn1 cn2
 
 requireSubclass :: Hierarchy -> ClassName -> ClassName -> Stmt Fact
-requireSubclass hry s t = 
-  case t of 
-    "java/lang/Object" -> true
-    _ -> and [ unbrokenPath path | path <- subclassPaths s t hry ]
+requireSubclass hry s t = case t of 
+  "java/lang/Object" -> true
+  _ -> and [ unbrokenPath path | path <- subclassPaths s t hry ]
 
 hasInterface :: ClassName -> ClassName -> Stmt Fact
 hasInterface cn1 cn2 = tt (HasInterface cn1 cn2)
