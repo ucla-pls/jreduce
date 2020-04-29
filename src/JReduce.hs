@@ -133,7 +133,7 @@ run strat = do
           . meassure (Count "scc" . maybe 0 length)
           . set problemCost (fromIntegral . IS.size . IS.unions) 
           $ p3
-      
+
       OverLogicApprox -> do
         p2 <- targetProblem True $ p1
         (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
@@ -142,7 +142,7 @@ run strat = do
           . meassure (Count "vars" . maybe 0 IS.size)
           . set problemCost (fromIntegral . IS.size) 
           $ p3
-      
+
       OverLogicDdmin -> do
         p2 <- targetProblem True $ p1
         (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
@@ -160,6 +160,16 @@ run strat = do
         (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         (failure, result) <- runReductionProblem start (wf </> "reduction")
           (ipfBinaryReduction ipf)
+          . meassure (Count "vars" . maybe 0 IS.size)
+          . set problemCost (fromIntegral . IS.size)
+          $ p3
+        checkResults wf p3 (failure, result)
+
+      OverLogicSingle -> do
+        p2 <- targetProblem True $ p1
+        (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        (failure, result) <- runReductionProblem start (wf </> "reduction")
+          (ipfSingleBinaryReduction ipf)
           . meassure (Count "vars" . maybe 0 IS.size)
           . set problemCost (fromIntegral . IS.size)
           $ p3
@@ -202,6 +212,7 @@ data Strategy
   | OverLogicGraph 
   | OverLogicApprox 
   | OverLogicDdmin
+  | OverLogicSingle
   | OverLogic 
   deriving (Show)
 
@@ -231,6 +242,8 @@ strategyParser =
           Just $ OverLogicApprox 
         "logic+ddmin" ->
           Just $ OverLogicDdmin
+        "logic+sinlge" ->
+          Just $ OverLogicSingle
         "logic" ->
           Just $ OverLogic 
         _ -> Nothing

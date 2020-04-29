@@ -4,7 +4,7 @@
 , jvm-binary ? import ./nix/jvm-binary.nix 
 , reduce-util ? "${import ./nix/reduce.nix}/reduce-util"
 , reduce ? "${import ./nix/reduce.nix}/reduce"
-, dirtree ? "${import ./nix/dirtree.nix}"
+, dirtree ? import ./nix/dirtree.nix
 }: 
 let 
   haskellPackages = 
@@ -13,12 +13,13 @@ let
     else pkgs.haskell.packages."${compiler}";
 in
   haskellPackages.developPackage {
-    root = builtins.filterSource 
-      (path: type: baseNameOf path != ".nix")
-      ./.;
+    root = pkgs.lib.cleanSourceWith 
+      { filter = path: type: baseNameOf path != ".nix";
+        src = pkgs.lib.cleanSource ./.;
+      };
     name = "jreduce";
     source-overrides = {
-      inherit jvmhs jvm-binary reduce-util reduce dirtree;
+      inherit jvmhs reduce reduce-util dirtree jvm-binary; 
     };
     overrides = hsuper: hself: { };
     modifier = drv:

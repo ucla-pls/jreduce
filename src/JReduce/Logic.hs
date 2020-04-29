@@ -44,7 +44,8 @@ import           Data.Monoid
 import           Text.Show
 import           Control.Monad
 import           Control.Monad.IO.Class
-import qualified Data.List                     as List
+import qualified Data.List                     as L
+import qualified Data.List.NonEmpty            as NE
 import           GHC.Generics                   ( Generic )
 import           Prelude                 hiding ( fail
                                                 , not
@@ -351,9 +352,9 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
       displayClause c = 
         displayString (LS.displayImplication (showsVariable variables) c "\n")
 
-  L.info . L.displayf "Found %d items." $ List.length items
+  L.info . L.displayf "Found %d items." $ L.length items
   L.info . L.displayf "Found %d facts." $ M.size factsToVar
-  L.info . L.displayf "The core is %d of them." $ List.length core
+  L.info . L.displayf "The core is %d of them." $ L.length core
 
   mid <- liftIO $ readIORef maxid
   return (variables, mid, handler . over _2 lfn) 
@@ -410,7 +411,7 @@ describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
   dumpCore <- view cfgDumpCore 
   dumpClosures <- view cfgDumpClosures
   when (dumpCore || dumpClosures) . liftIO $ do
-    let (core, progress) = weightedProgression costfn ipf
+    let core NE.:| progress = weightedProgression costfn ipf (cnfVariables cnf)
     when dumpCore do
       LazyText.writeFile (wf </> "core.txt") . LazyText.toLazyText  
         $ foldMap (\a -> displayShowS (showsVariable variables a) <> "\n") (IS.toList core)
@@ -419,7 +420,7 @@ describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
       LazyText.writeFile (wf </> "progression.txt") . LazyText.toLazyText  
         . foldMap 
           (\a -> (fold 
-            . List.intersperse ", " 
+            . L.intersperse ", " 
             . map (displayShowS . showsVariable variables)
             $ IS.toList a) 
             <> "\n") 
@@ -427,7 +428,7 @@ describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
 
   return 
     ( ipf
-    , (fromVars, ipfVars ipf)
+    , (fromVars, cnfVariables cnf)
     )
 
 approxLogicProblem :: 
@@ -435,9 +436,8 @@ approxLogicProblem ::
   -> Problem a IS.IntSet
   -> Problem a [Int]
 approxLogicProblem ipf = 
-  liftProblem IS.toList (resolver . IS.fromList)
-  where resolver = fasterLWCC ipf 
-
+  refineProblem 
+    (\s -> (Just . logicalClosure ipf s . IS.fromList, IS.toList s)) 
 
 displayShowS :: ShowS -> Builder.Builder
 displayShowS f = displayString (f "")
