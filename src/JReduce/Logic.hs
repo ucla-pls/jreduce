@@ -37,6 +37,7 @@ import           Data.Foldable           hiding ( and
                                                 , or
                                                 )
 import           Data.Maybe
+import           Text.Printf
 import           Data.IORef
 import           Data.Tuple
 import           Data.Char                      ( isNumber )
@@ -65,6 +66,9 @@ import qualified Jvmhs
 -- containers
 import qualified Data.IntMap.Strict            as IntMap
 
+-- directory
+import System.Directory
+
 -- nfdata
 import           Control.DeepSeq
 
@@ -86,6 +90,7 @@ import qualified Data.Text.Lazy.Builder        as Builder
 import           Control.Reduce.Boolean
 import           Control.Reduce.Graph
 import           Control.Reduce.Boolean.CNF
+import           Control.Reduce.Progression
 import qualified Control.Reduce.Boolean.LiteralSet
                                                as LS
 import           Control.Reduce.Problem
@@ -210,19 +215,19 @@ itemR f' = \case
       f
       (c ^. classInterfaces)
 
-    bootstrapMethods <- 
-      (iso IntMap.toAscList IntMap.fromAscList 
-      . listR . payload c . reduceAs _IBootstrapMethod) 
+    bootstrapMethods <-
+      (iso IntMap.toAscList IntMap.fromAscList
+      . listR . payload c . reduceAs _IBootstrapMethod)
       f (c ^.classBootstrapMethods)
- 
+
     pure
       $  c &  classSuper .~ _super
-      &  classFields .~ fields 
-      &  classMethods .~ methods 
+      &  classFields .~ fields
+      &  classMethods .~ methods
       &  classInnerClasses .~ innerClasses
-      &  classInterfaces .~ _interfaces 
+      &  classInterfaces .~ _interfaces
       &  classBootstrapMethods .~ bootstrapMethods
-  
+
   fieldR :: Class -> Reduction Field Item
   fieldR cls fn f = do
     if f ^. fieldAccessFlags . contains FFinal
@@ -255,36 +260,36 @@ unBuilder :: Builder.Builder -> String
 unBuilder = LazyText.unpack . Builder.toLazyText
 
 showsVariable :: V.Vector (Fact, [Int]) -> Int -> ShowS
-showsVariable variables i = 
+showsVariable variables i =
   case variables V.!? i of
-    Just (fact, idx) -> 
+    Just (fact, idx) ->
       showString (unBuilder $ displayFact fact <> display (reverse idx))
-    Nothing -> 
+    Nothing ->
       shows i
 
-initializeKeyFunction :: 
-  forall m. MonadIOReader Config m 
+initializeKeyFunction ::
+  forall m. MonadIOReader Config m
   => LogicConfig -> Target -> FilePath -> m (V.Vector (Fact, [Int]), Int, ([Int], Item) -> m CNF)
 initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
   lfn  <- logic cfg <$> fetchHierachy wf (targetClasses trg)
   core <- view cfgCore
 
-  let 
-    items = 
+  let
+    items =
       (if reverseOrder cfg then reverse else id)
       (itemsOfTarget trg)
-   
+
     factsToVar :: M.Map Fact (S.Set Int)
-    factsToVar = 
-      M.fromListWith S.union 
-        [ (f, S.singleton i) 
-        | (i, f) <- V.toList (V.indexed facts) 
+    factsToVar =
+      M.fromListWith S.union
+        [ (f, S.singleton i)
+        | (i, f) <- V.toList (V.indexed facts)
         ]
 
     back :: V.Vector ([Int], Item)
-    back = 
+    back =
       V.fromList items
-    
+
     facts :: V.Vector Fact
     facts =
       V.map (fst . lfn . snd) back
@@ -293,30 +298,30 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
     variables = V.zip facts (V.map fst back)
 
     cores :: V.Vector Bool
-    cores = 
+    cores =
       V.map (\fact-> serializeWith displayFact fact `HS.member` core) facts
 
     indiciesToVar :: M.Map [Int] Int
     indiciesToVar =
       M.fromList (map swap . V.toList . V.indexed . V.map fst $ back)
-  
+
   maxid <- liftIO $ newIORef (V.length back)
 
   let
-    handler :: ([Int], (Fact, Stmt Fact)) -> m CNF 
+    handler :: ([Int], (Fact, Stmt Fact)) -> m CNF
     handler (idx, (fact, stmt)) = L.logtime L.DEBUG ("Processing " <> debuginfo) $ do
-      mid <- liftIO $ readIORef maxid 
+      mid <- liftIO $ readIORef maxid
       let cnf = toMinimalCNF mid nnfAfter
-      liftIO $ writeIORef maxid 
+      liftIO $ writeIORef maxid
         (max mid . maybe minBound fst . IS.maxView $ cnfVariables cnf)
 
-      whenM (view cfgDumpItems) . liftIO $ do 
-        LazyText.appendFile (wf </> "items.txt") . LazyText.toLazyText  
-          $ displayText key <> display (reverse idx) <> "\n" 
-        LazyText.appendFile (wf </> "items-logical.txt") . LazyText.toLazyText  
-          $ displayText key <> display (reverse idx) <> " " <> display v <> "\n" 
-          <> "  LV1 " <> displayString (showsStmtWith showsFact stmt "\n") 
-          <> "  LV2 " <> displayString (showsNnfWith showsFact nnf "\n") 
+      whenM (view cfgDumpItems) . liftIO $ do
+        LazyText.appendFile (wf </> "items.txt") . LazyText.toLazyText
+          $ displayText key <> display (reverse idx) <> "\n"
+        LazyText.appendFile (wf </> "items-logical.txt") . LazyText.toLazyText
+          $ displayText key <> display (reverse idx) <> " " <> display v <> "\n"
+          <> "  LV1 " <> displayString (showsStmtWith showsFact stmt "\n")
+          <> "  LV2 " <> displayString (showsNnfWith showsFact nnf "\n")
           <> "  LV3 " <> displayString (showsNnfWith (showsVariable variables) nnfAfter "\n")
           <> foldMap (("  " <>) . displayClause) (cnfClauses cnf)
 
@@ -325,20 +330,20 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
       v   = indiciesToVar M.! idx
       key = serializeWith displayFact fact
       isCore = cores V.! v
-      
-      debuginfo = 
+
+      debuginfo =
         displayText key <> (if isCore then " CORE" else "")
 
       nnf :: Nnf Fact
-      nnf = 
+      nnf =
         flattenNnf . nnfFromStmt . fromStmt $ stmt
 
       nnfAfter :: Nnf Int
-      nnfAfter = 
-        flattenNnf . nnfFromStmt . fromStmt 
-        . (case idx of 
-            [] -> id 
-            _:rest -> \s -> 
+      nnfAfter =
+        flattenNnf . nnfFromStmt . fromStmt
+        . (case idx of
+            [] -> id
+            _:rest -> \s ->
               s /\ (tt (indiciesToVar M.! idx) ==> tt (indiciesToVar M.! rest))
           )
         . (if not isCore then id else \s -> s /\ tt (indiciesToVar M.! idx))
@@ -349,7 +354,7 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
       showsFact :: Fact -> ShowS
       showsFact = showString . unBuilder . displayFact
 
-      displayClause c = 
+      displayClause c =
         displayString (LS.displayImplication (showsVariable variables) c "\n")
 
   L.info . L.displayf "Found %d items." $ L.length items
@@ -357,87 +362,109 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
   L.info . L.displayf "The core is %d of them." $ L.length core
 
   mid <- liftIO $ readIORef maxid
-  return (variables, mid, handler . over _2 lfn) 
+  return (variables, mid, handler . over _2 lfn)
 
- where 
+ where
   itemsOfTarget :: Target -> [([Int], Item)]
   itemsOfTarget = itoListOf (deepSubelements itemR) . review _ITarget
 
-computeCNF :: 
-  MonadIOReader Config m 
-  => (Int -> ShowS) 
-  -> (a -> m CNF) 
-  -> FilePath 
-  -> [a] 
+computeCNF ::
+  MonadIOReader Config m
+  => (Int -> ShowS)
+  -> (a -> m CNF)
+  -> FilePath
+  -> [a]
   -> m CNF
-computeCNF sv keyFun wf items = L.phase "Compute CNF" do 
+computeCNF sv keyFun wf items = L.phase "Compute CNF" do
   cnf <- CNF . foldMap cnfClauses <$> mapM keyFun items
   whenM (view cfgDumpLogic) . liftIO $ do
-    LazyText.appendFile (wf </> "cnf.txt") 
-    . LazyText.toLazyText  
+    LazyText.appendFile (wf </> "cnf.txt")
+    . LazyText.toLazyText
     $ foldMap (\c -> displayString $ LS.displayImplication sv
                c "\n") (cnfClauses cnf)
   return cnf
 
-describeLogicProblem :: 
+logProgression ::
+  forall a m.
+  MonadIOReader Config m
+  => FilePath
+  -> V.Vector (Fact, [Int])
+  -> NE.NonEmpty IS.IntSet
+  -> m ()
+logProgression prog variables progression = do
+  dumpClosures <- view cfgDumpClosures
+  when dumpClosures . liftIO $ do
+    path <- findNext [0 :: Int ..]
+    LazyText.writeFile path . LazyText.toLazyText
+      . foldMap
+        (\a -> (fold
+          . L.intersperse " | "
+          . map (displayShowS . showsVariable variables)
+          $ IS.toList a)
+          <> "\n")
+      $ progression
+
+ where
+  findNext (i:st) = do
+    let path = printf (prog </> "%04i-progression.txt") i
+    b <- doesPathExist path
+    if b then return path else findNext st
+
+
+describeLogicProblem ::
   forall a m.
   MonadIOReader Config m
   => LogicConfig
-  -> FilePath 
+  -> FilePath
   -> Problem a Target
-  -> m (IPF, Problem a IS.IntSet)
-describeLogicProblem cfg wf p = flip refineProblemA' p \s -> do
+  -> m (CNF, V.Vector (Fact, [Int]), Problem a IS.IntSet)
+describeLogicProblem cfg wf p = (\((a,b), c) -> (a,b,c)) <$> flip refineProblemA' p \s -> do
   (variables, _, keyFun) <- initializeKeyFunction cfg s wf
   cnf <- computeCNF (showsVariable variables) keyFun wf
     $ itoListOf (deepSubelements itemR) (ITarget s)
 
-  let 
-    ipf = case fromCNF $ cnf of
-      Just ipf' -> ipf'
-      Nothing  -> error "The created CNF was not IPF"
+  unless (isIPF cnf) $ do
+    fail "The created CNF was not IPF"
 
+  let
     fromVars :: IS.IntSet -> Maybe Target
     fromVars vars = preview _ITarget =<<
       limit (deepReduction itemR) (`S.member` varset) (ITarget s)
-      where 
-        varset = S.fromList . map snd 
-          . mapMaybe (variables V.!?) 
-          . IS.toList 
+      where
+        varset = S.fromList . map snd
+          . mapMaybe (variables V.!?)
+          . IS.toList
           $ vars
 
-    costfn =
-      fromIntegral . IS.size . fst . IS.split (V.length variables)
-
-  dumpCore <- view cfgDumpCore 
+  dumpCore <- view cfgDumpCore
   dumpClosures <- view cfgDumpClosures
   when (dumpCore || dumpClosures) . liftIO $ do
-    let core NE.:| progress = weightedProgression costfn ipf (cnfVariables cnf)
+    let core NE.:| progress = calculateProgression cnf (cnfVariables cnf)
     when dumpCore do
-      LazyText.writeFile (wf </> "core.txt") . LazyText.toLazyText  
+      LazyText.writeFile (wf </> "core.txt") . LazyText.toLazyText
         $ foldMap (\a -> displayShowS (showsVariable variables a) <> "\n") (IS.toList core)
-
     when dumpClosures do
-      LazyText.writeFile (wf </> "progression.txt") . LazyText.toLazyText  
-        . foldMap 
-          (\a -> (fold 
-            . L.intersperse ", " 
+      LazyText.writeFile (wf </> "progression.txt") . LazyText.toLazyText
+        . foldMap
+          (\a -> (fold
+            . L.intersperse ", "
             . map (displayShowS . showsVariable variables)
-            $ IS.toList a) 
-            <> "\n") 
+            $ IS.toList a)
+            <> "\n")
         $ progress
 
-  return 
-    ( ipf
+  return
+    ( (cnf, variables)
     , (fromVars, cnfVariables cnf)
     )
 
-approxLogicProblem :: 
-  IPF 
+approxLogicProblem ::
+  CNF
   -> Problem a IS.IntSet
   -> Problem a [Int]
-approxLogicProblem ipf = 
-  refineProblem 
-    (\s -> (Just . logicalClosure ipf s . IS.fromList, IS.toList s)) 
+approxLogicProblem ipf =
+  refineProblem
+    (\s -> (Just . calculateLogicalClosure ipf . IS.fromList, IS.toList s))
 
 displayShowS :: ShowS -> Builder.Builder
 displayShowS f = displayString (f "")
@@ -453,17 +480,17 @@ describeGraphProblem cfg wf p = flip refineProblemA p \s -> do
   cnf <- computeCNF (showsVariable variables) keyFun wf
     $ itoListOf (deepSubelements itemR) (ITarget s)
 
-  let 
-    (required, edges') = fold 
-      [ case over both IS.minView $ LS.splitLiterals clause of 
+  let
+    (required, edges') = fold
+      [ case over both IS.minView $ LS.splitLiterals clause of
           (Nothing    , Just (t, _)) -> (IS.singleton t, mempty)
           (Just (f, _), Just (t, _)) -> (mempty, S.singleton (f,t))
           _                          -> error "CNF is not IPF"
-      | clause <- S.toList $ cnfClauses cnf 
+      | clause <- S.toList $ cnfClauses cnf
       ]
 
-    (graph, rev) = buildGraphFromNodesAndEdges 
-      [(k,k) | k <- [0..mid - 1]] 
+    (graph, rev) = buildGraphFromNodesAndEdges
+      [(k,k) | k <- [0..mid - 1]]
       [Edge () f t | (f, t) <- S.toList edges']
 
     core = closure graph (mapMaybe rev $ IS.toList required)
@@ -471,8 +498,8 @@ describeGraphProblem cfg wf p = flip refineProblemA p \s -> do
     fromClosures cls = preview _ITarget =<<
       limit (deepReduction itemR) (`S.member` varset) (ITarget s)
       where
-        varset = S.fromList . map snd 
-          . mapMaybe (variables V.!?) 
+        varset = S.fromList . map snd
+          . mapMaybe (variables V.!?)
           . map (nodeLabel . (nodes graph V.!))
           . IS.toList . IS.unions
           $ core:cls
@@ -481,13 +508,13 @@ describeGraphProblem cfg wf p = flip refineProblemA p \s -> do
       filter (not . IS.null)
       . map (IS.\\ core)
       $ closures graph
-    
-  dumpGraphInfo wf 
+
+  dumpGraphInfo wf
     (graph <&> flip (showsVariable variables) "")
     core _targets
 
-  -- ( fromIntegral . IS.size . fst 
-  --     . IS.split (V.length variables) 
+  -- ( fromIntegral . IS.size . fst
+  --     . IS.split (V.length variables)
   --     . IS.unions
   return (fromClosures, _targets)
 
@@ -503,19 +530,19 @@ logic LogicConfig{..} hry = \case
 
     , c ==> requireClassNamesOf cls (classAnnotations.folded) cls
 
-    , -- If the class is a enum, it needs to extend java.lang.Enum and have 
+    , -- If the class is a enum, it needs to extend java.lang.Enum and have
       -- these methods and fields
-      given (cls^.classAccessFlags.contains CEnum) $ c ==> 
+      given (cls^.classAccessFlags.contains CEnum) $ c ==>
         requireSubclass hry (cls^.className) "java/lang/Enum"
-        /\ given (cls^?classSuper._Just.simpleType == Just "java/lang/Enum") 
-        ( and 
-          [ requireMethod hry cls . mkAbsMethodId cls $ "values" 
-             <:> MethodDescriptor [] 
+        /\ given (cls^?classSuper._Just.simpleType == Just "java/lang/Enum")
+        ( and
+          [ requireMethod hry cls . mkAbsMethodId cls $ "values"
+             <:> MethodDescriptor []
               (ReturnDescriptor . Just . JTRef . JTArray .JTRef . JTClass $ cls^.className)
-          , requireMethod hry cls . mkAbsMethodId cls $ "valueOf" 
-            <:> MethodDescriptor ["Ljava/lang/String;"] 
+          , requireMethod hry cls . mkAbsMethodId cls $ "valueOf"
+            <:> MethodDescriptor ["Ljava/lang/String;"]
               (ReturnDescriptor . Just . JTRef . JTClass $ cls^.className)
-          , requireField hry cls . mkAbsFieldId cls $ "$VALUES" 
+          , requireField hry cls . mkAbsFieldId cls $ "$VALUES"
             <:> FieldDescriptor  (JTRef . JTArray .JTRef . JTClass $ cls^.className)
           ]
         )
@@ -536,29 +563,29 @@ logic LogicConfig{..} hry = \case
       -- If any field is synthetic we will require it to not be removed, if the
       -- class exist. This helps with many problems.
       given (FSynthetic `S.member` flags) do
-        classExist cls ==> f 
+        classExist cls ==> f
 
-    , -- If class is an interface and the feild is static keep the 
+    , -- If class is an interface and the feild is static keep the
       -- classInitializers
-      given (cls^.classAccessFlags .contains CAbstract && field^.fieldAccessFlags.contains FStatic) do 
+      given (cls^.classAccessFlags .contains CAbstract && field^.fieldAccessFlags.contains FStatic) do
         forallOf classInitializers cls \m ->
           f ==> codeIsUntuched m
     ]
     where flags = field^.fieldAccessFlags
-  
+
   IFieldFinal (cls, field) -> FieldIsFinal (mkAbsFieldId cls field)
     `withLogic` \f ->
     [ -- If a field is final it has to be set. This means we cannot stub
       -- class initializers and class constructors.
       if FStatic `S.member` flags
       then
-        forallOf classInitializers cls \m -> 
+        forallOf classInitializers cls \m ->
           f ==> codeIsUntuched m
       else
-        forallOf classConstructors cls \m -> 
+        forallOf classConstructors cls \m ->
           f ==> codeIsUntuched m
     , -- If a field is synthetic or static do not remove any final flags.
-      -- final static fields are treated differently than other fields, and 
+      -- final static fields are treated differently than other fields, and
       -- are more like constants.
       given (FSynthetic `S.member` flags  \/ FStatic `S.member` flags) $
         fieldExist (mkAbsFieldId cls field) ==> f
@@ -569,13 +596,13 @@ logic LogicConfig{..} hry = \case
     `withLogic` \m ->
     [ -- Since we do not remove the return argument or the arguemnts we have to build
       -- their requirements here.
-      m ==> requireClassNamesOf cls 
-        (methodReturnType.classNames <> methodParameters.folded.classNames) 
+      m ==> requireClassNamesOf cls
+        (methodReturnType.classNames <> methodParameters.folded.classNames)
         method
 
-    , -- If you are a constructor, you have to be removed completely if you can be 
+    , -- If you are a constructor, you have to be removed completely if you can be
       -- removed
-      given (method^.methodIdName == "<init>") $ 
+      given (method^.methodIdName == "<init>") $
         m ==> codeIsUntuched (mkAbsMethodId cls method)
 
       -- Require the classNames of the exceptions
@@ -585,9 +612,9 @@ logic LogicConfig{..} hry = \case
       m ==> requireClassNamesOf cls
         (methodTypeParameters.folded)
         method
-    
-    , m ==> requireClassNamesOf cls 
-        (methodAnnotations.folded) 
+
+    , m ==> requireClassNamesOf cls
+        (methodAnnotations.folded)
         method
 
     , if method^.methodAccessFlags.contains MAbstract
@@ -608,7 +635,7 @@ logic LogicConfig{..} hry = \case
       -- this method have to stay or we have to remove the implements interface.
       forall (superDeclarationPaths (mkAbsMethodId cls method) hry)
         \(decl, isAbstract, path) -> given isAbstract
-          $ methodExist decl /\ unbrokenPath path ==> 
+          $ methodExist decl /\ unbrokenPath path ==>
             requireNonAbstractMethod hry cls (mkAbsMethodId cls method)
 
     , m ==> requireClassNamesOf cls (methodDefaultAnnotation._Just) method
@@ -634,20 +661,20 @@ logic LogicConfig{..} hry = \case
     [ -- An Implements only depends on the class of the supertype and its type
       -- parameters.
       s ==> requireClassNames cls ct
-      
+
     , -- In case the superclass have no empty init method we require at least
       -- one of it's constructors to exist.
-      let 
+      let
         ctc = ct^.simpleType
         mid = mkAbsMethodId ctc ("<init>:()V" :: MethodId)
-      in 
-      s ==> 
-        case Jvmhs.methodExist mid hry of 
-          Just (view stubMethodAccess -> access) 
-            |  access >= Protected 
+      in
+      s ==>
+        case Jvmhs.methodExist mid hry of
+          Just (view stubMethodAccess -> access)
+            |  access >= Protected
             \/ access == Default /\  ctc^.package == cls^.className.package ->
               methodExist mid \/ existOf classConstructors cls codeIsUntuched
-          _ -> 
+          _ ->
             existOf classConstructors cls codeIsUntuched
 
     , -- Given that we should keep the extends
@@ -664,7 +691,7 @@ logic LogicConfig{..} hry = \case
       given (cls^.className == ic^.innerClass) $
       classExist cls ==> i
 
-    , -- If the outer class is an this class then we can not remove this 
+    , -- If the outer class is an this class then we can not remove this
       -- innerclass statement before the innerclass have been removed
       given (Just (cls^.className) == ic^.innerOuterClass) $
       classExist (ic^.innerClass) ==> i
@@ -674,19 +701,19 @@ logic LogicConfig{..} hry = \case
       -- it must have an innerclass entry that describes that class.
     ]
 
-  IBootstrapMethod (cls, (i, btm)) -> 
-    HasBootstrapMethod (cls ^.className) i `withLogic` \bm -> 
+  IBootstrapMethod (cls, (i, btm)) ->
+    HasBootstrapMethod (cls ^.className) i `withLogic` \bm ->
     [ bm ==> requireMethodHandle hry cls (btm^.bootstrapMethodHandle)
-    , bm ==> forallOf (bootstrapMethodArguments.folded) btm \case 
+    , bm ==> forallOf (bootstrapMethodArguments.folded) btm \case
         VClass rf -> requireClassNames cls rf
-        VMethodType md -> 
+        VMethodType md ->
           -- We would love to require the method, but we do not know the
           -- abslocatio of the MethodDescriptor
           requireClassNames cls md
-        VMethodHandle mh -> 
+        VMethodHandle mh ->
           requireMethodHandle hry cls mh
         _ -> true
-    ] 
+    ]
     -- -- We do currently not reduce bootstrap methods, so their requirements are
     --   -- handled from here.
     --   forallOf (classBootstrapMethods.folded) cls
@@ -725,10 +752,10 @@ logic LogicConfig{..} hry = \case
      -- c ==> requireClassNamesOf cls (codeExceptionTable.folded) code
       c ==> requireClassNamesOf cls (codeStackMap._Just) code
     , c ==> requireClassNamesOf cls (codeByteCode.folded) code
-    , c ==> forallOf (codeExceptionTable.folded.ehCatchType._Just) code \ct -> 
+    , c ==> forallOf (codeExceptionTable.folded.ehCatchType._Just) code \ct ->
         requireClassName cls ct
         /\ ct `requireSubtype` ("java/lang/Throwable" :: ClassName)
-      
+
     ] ++
     [ case oper of
         ArrayStore _ ->
@@ -741,16 +768,16 @@ logic LogicConfig{..} hry = \case
           -- element on the stack has to be a subclass of fields class.
           c ==> requireField hry cls fid
             /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
-       
-        -- TODO: Experimental overapproximation. 
+
+        -- TODO: Experimental overapproximation.
         -- The idea is to require all extensions of the class variable.
         Push (Just (VClass (JTClass cn))) ->
           c ==> forall (S.fromList p') unbrokenPath
-         where 
-          p'= 
-           [ path 
-           | b <- superclasses cn hry 
-           , path <- subclassPaths cn b hry 
+         where
+          p'=
+           [ path
+           | b <- superclasses cn hry
+           , path <- subclassPaths cn b hry
            ]
 
         Put fa fid ->
@@ -766,8 +793,8 @@ logic LogicConfig{..} hry = \case
           -- For the methods there are three general cases, a regular method call,
           -- a static methods call (no-object) and a dynamic call (no-class).
           methodRequirements
-          /\ (c ==> and 
-              [ s `requireSubtype` t 
+          /\ (c ==> and
+              [ s `requireSubtype` t
               | (s, t) <- zip (state ^. tcStack) (reverse stackTypes)
               ]
             )
@@ -778,21 +805,21 @@ logic LogicConfig{..} hry = \case
                   ( let mid = AbsMethodId $ m^.asInClass
                     in (c ==> if isSpecial then methodExist mid else requireMethod hry cls mid)
                         /\ given (Text.isPrefixOf "access$" (m^.methodIdName))
-                          (methodExist mid ==> c)   
+                          (methodExist mid ==> c)
                         /\ given (
-                            ( maybe False (isNumber . fst) . Text.uncons . last . Text.splitOn "$" 
+                            ( maybe False (isNumber . fst) . Text.uncons . last . Text.splitOn "$"
                             $ mid^.className.fullyQualifiedName
-                            ) 
-                            /\ mid^.className /= cls ^.className) 
+                            )
+                            /\ mid^.className /= cls ^.className)
                           (classExist (mid^.className) ==> c)
                   , [asTypeInfo $ m^.asInClass.className | not isStatic]
                     <> (map asTypeInfo $ m^.methodIdArgumentTypes)
                   )
-                Left (i, m) -> 
-                  ( ( c ==> requireBootstrapMethod cls (fromIntegral i) ) 
+                Left (i, m) ->
+                  ( ( c ==> requireBootstrapMethod cls (fromIntegral i) )
                     /\ ( requireBootstrapMethod cls (fromIntegral i) ==> c)
                   -- BootstrapMethods are bound to thier use without them
-                  -- they are nothing and should be removed 
+                  -- they are nothing and should be removed
                   , map asTypeInfo $ m^.methodIdArgumentTypes
                   )
 
@@ -895,7 +922,7 @@ isSubclass cn1 cn2 = \case
   Extend -> hasSuperClass cn1 cn2
 
 requireSubclass :: Hierarchy -> ClassName -> ClassName -> Stmt Fact
-requireSubclass hry s t = case t of 
+requireSubclass hry s t = case t of
   "java/lang/Object" -> true
   _ -> and [ unbrokenPath path | path <- subclassPaths s t hry ]
 

@@ -18,7 +18,7 @@ import           Control.Lens
 -- mtl
 import           Control.Monad.Reader
 
--- time 
+-- time
 import Data.Time.Clock
 
 -- text
@@ -41,7 +41,9 @@ import qualified Data.Csv as C
 
 -- reduce-util
 import           Control.Reduce.Util
+import           Control.Reduce.Progression
 import           Control.Reduce.Boolean.CNF
+import qualified Control.Reduce.Boolean.LiteralSet as LS
 import           Control.Reduce.Util.Logger            as L
 import           Control.Reduce.Util.OptParse
 import           Control.Reduce.Metric
@@ -93,7 +95,7 @@ instance Metric DirTreeMetric where
 
 run :: Strategy -> ReaderT Config IO ()
 run strat = do
-  Config {..} <- ask
+  scfg @ Config {..} <- ask
   L.info "Started JReduce."
   start <- liftIO getCurrentTime
 
@@ -108,18 +110,18 @@ run strat = do
       OverClasses b -> do
         p2 <- targetProblem b $ p1
         p3 <- JReduce.Classes.describeProblem wf p2
-        runBinary start wf 
+        runBinary start wf
           . meassure (Count "scc" . maybe 0 length)
-          . set problemCost (fromIntegral . IS.size . IS.unions) 
+          . set problemCost (fromIntegral . IS.size . IS.unions)
           $ p3
-      
+
       OverItemsHdd -> do
         p2 <- targetProblem True $ p1
         let p4 = meassure (Count "items" . length)
-              . toReductionDeep JReduce.Logic.itemR 
-              . liftProblem 
+              . toReductionDeep JReduce.Logic.itemR
+              . liftProblem
                   (JReduce.Logic.ITarget)
-                  (fromJust . preview JReduce.Logic._ITarget) 
+                  (fromJust . preview JReduce.Logic._ITarget)
               $ p2
         (failure, result) <- runReductionProblem start (wf </> "reduction")
           (const hdd)
@@ -129,26 +131,26 @@ run strat = do
       OverLogicGraph -> do
         p2 <- targetProblem True $ p1
         p3 <- JReduce.Logic.describeGraphProblem cfg wf p2
-        runBinary start wf 
+        runBinary start wf
           . meassure (Count "scc" . maybe 0 length)
-          . set problemCost (fromIntegral . IS.size . IS.unions) 
+          . set problemCost (fromIntegral . IS.size . IS.unions)
           $ p3
 
       OverLogicApprox -> do
         p2 <- targetProblem True $ p1
-        (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
-        runBinary start wf 
+        (ipf, _, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        runBinary start wf
           . JReduce.Logic.approxLogicProblem ipf
           . meassure (Count "vars" . maybe 0 IS.size)
-          . set problemCost (fromIntegral . IS.size) 
+          . set problemCost (fromIntegral . IS.size)
           $ p3
 
       OverLogicDdmin -> do
         p2 <- targetProblem True $ p1
-        (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        (ipf, _, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         let p4 = JReduce.Logic.approxLogicProblem ipf
               . meassure (Count "vars" . maybe 0 IS.size)
-              . set problemCost (fromIntegral . IS.size) 
+              . set problemCost (fromIntegral . IS.size)
               $ p3
         (failure, result) <- runReductionProblem start (wf </> "reduction")
           (const ddmin)
@@ -157,19 +159,17 @@ run strat = do
 
       OverLogic -> do
         p2 <- targetProblem True $ p1
-        (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        (ipf, vars , p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         (failure, result) <- runReductionProblem start (wf </> "reduction")
-          (ipfBinaryReduction ipf)
-          . meassure (Count "vars" . maybe 0 IS.size)
-          . set problemCost (fromIntegral . IS.size)
-          $ p3
-        checkResults wf p3 (failure, result)
-
-      OverLogicSingle -> do
-        p2 <- targetProblem True $ p1
-        (ipf, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
-        (failure, result) <- runReductionProblem start (wf </> "reduction")
-          (ipfSingleBinaryReduction ipf)
+          (\_costfn -> generalizedBinaryReduction
+            (\ipf is -> do
+              let p = calculateProgression ipf is
+              runReaderT (JReduce.Logic.logProgression (wf </> "progressions") vars p) scfg
+              return p
+            )
+            (\ipf c -> learnClauseCNF (LS.mkPositiveClause c) ipf)
+            ipf
+          )
           . meassure (Count "vars" . maybe 0 IS.size)
           . set problemCost (fromIntegral . IS.size)
           $ p3
@@ -190,7 +190,7 @@ run strat = do
         void $ checkSolution (wf </> "final") p3 result
 
       return (fromJust $ _problemExtractBase p3 result)
-      
+
     runBinary start wf p3 = do
       (failure, result) <- runReductionProblem start (wf </> "reduction")
         genericBinaryReduction
@@ -208,12 +208,12 @@ run strat = do
 
 data Strategy
   = OverClasses Bool
-  | OverItemsHdd 
-  | OverLogicGraph 
-  | OverLogicApprox 
+  | OverItemsHdd
+  | OverLogicGraph
+  | OverLogicApprox
   | OverLogicDdmin
   | OverLogicSingle
-  | OverLogic 
+  | OverLogic
   deriving (Show)
 
 strategyParser :: Parser Strategy
@@ -237,13 +237,11 @@ strategyParser =
         "items+hdd" ->
           Just $ OverItemsHdd
         "logic+graph" ->
-          Just $ OverLogicGraph 
+          Just $ OverLogicGraph
         "logic+approx" ->
-          Just $ OverLogicApprox 
+          Just $ OverLogicApprox
         "logic+ddmin" ->
           Just $ OverLogicDdmin
-        "logic+sinlge" ->
-          Just $ OverLogicSingle
         "logic" ->
-          Just $ OverLogic 
+          Just $ OverLogic
         _ -> Nothing
