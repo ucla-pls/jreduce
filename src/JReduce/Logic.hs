@@ -394,7 +394,7 @@ logProgression ::
   -> m (NE.NonEmpty IS.IntSet)
 logProgression prog variables cnf is = do
   let (limitedCNF, lok) = limitCNF is cnf
-  let progression = calculateProgression cnf is
+  let progression = calculateProgression generateTotalGraphOrder cnf is
   dumpClosures <- view cfgDumpClosures
   when dumpClosures . liftIO $ do
     createDirectoryIfMissing True prog
@@ -421,7 +421,7 @@ logProgression prog variables cnf is = do
       . LazyText.toLazyText
       $ foldMap
         (\i -> displayShowS (showsVariable variables i) <> "\n")
-        (generateGraphOrder (V.length lok) limitedCNF)
+        (generateTotalGraphOrder (V.length lok) limitedCNF)
 
   return progression
 
@@ -459,23 +459,6 @@ describeLogicProblem cfg wf p = (\((a,b), c) -> (a,b,c)) <$> flip refineProblemA
           . mapMaybe (variables V.!?)
           . IS.toList
           $ vars
-
-  dumpCore <- view cfgDumpCore
-  dumpClosures <- view cfgDumpClosures
-  when (dumpCore || dumpClosures) . liftIO $ do
-    let core NE.:| progress = calculateProgression cnf (cnfVariables cnf)
-    when dumpCore do
-      LazyText.writeFile (wf </> "core.txt") . LazyText.toLazyText
-        $ foldMap (\a -> displayShowS (showsVariable variables a) <> "\n") (IS.toList core)
-    when dumpClosures do
-      LazyText.writeFile (wf </> "progression.txt") . LazyText.toLazyText
-        . foldMap
-          (\a -> (fold
-            . L.intersperse ", "
-            . map (displayShowS . showsVariable variables)
-            $ IS.toList a)
-            <> "\n")
-        $ progress
 
   return
     ( (cnf, variables)
