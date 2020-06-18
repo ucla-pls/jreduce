@@ -389,13 +389,18 @@ logProgression ::
   MonadIOReader Config m
   => FilePath
   -> V.Vector (Fact, [Int])
-  -> NE.NonEmpty IS.IntSet
-  -> m ()
-logProgression prog variables progression = do
+  -> CNF
+  -> IS.IntSet
+  -> m (NE.NonEmpty IS.IntSet)
+logProgression prog variables cnf is = do
+  let (limitedCNF, lok) = limitCNF is cnf
+  let progression = calculateProgression cnf is
   dumpClosures <- view cfgDumpClosures
   when dumpClosures . liftIO $ do
-    path <- findNext [0 :: Int ..]
-    LazyText.writeFile path . LazyText.toLazyText
+    createDirectoryIfMissing True prog
+    i <- findNext [0 ..]
+    LazyText.writeFile (indexedFile i "progression.txt")
+      . LazyText.toLazyText
       . foldMap
         (\a -> (fold
           . L.intersperse " | "
@@ -403,12 +408,31 @@ logProgression prog variables progression = do
           $ IS.toList a)
           <> "\n")
       $ progression
+    LazyText.writeFile (indexedFile i "cnf.txt")
+      . LazyText.toLazyText
+      $ foldMap
+        (\c ->
+          displayString $ LS.displayImplication
+            (showsVariable variables . (lok V.!))
+          c "\n"
+        )
+        (cnfClauses limitedCNF)
+    LazyText.writeFile (indexedFile i "variableorder.txt")
+      . LazyText.toLazyText
+      $ foldMap
+        (\i -> displayShowS (showsVariable variables i) <> "\n")
+        (generateGraphOrder (V.length lok) limitedCNF)
+
+  return progression
 
  where
+  indexedFile :: Int -> String -> FilePath
+  indexedFile i name = printf (prog </> "%04i-%s") i name
+
   findNext (i:st) = do
-    let path = printf (prog </> "%04i-progression.txt") i
+    let path = indexedFile i "progression.txt"
     b <- doesPathExist path
-    if b then return path else findNext st
+    if not b then return i else findNext st
 
 
 describeLogicProblem ::

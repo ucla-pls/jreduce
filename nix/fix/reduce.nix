@@ -1,8 +1,8 @@
 # Auto-generated with fixnix (version 0.0.0)
-# add gh:ucla-pls/reduce/heads/reeval
+# add gh:ucla-pls/reduce/heads/master
 builtins.fetchTarball {
-  name   = "reduce_reeval_db57eb";
-  url    = "https://github.com/ucla-pls/reduce/archive/db57eba86d97a4523ddc54b62321c099767b8dff.tar.gz";
-  sha256 = "18zmmsc3ywwqc78cw0g3pdcxykyyv741yni9lasc4jn0kkyj8pza";
+  name   = "reduce_master_942e3d";
+  url    = "https://github.com/ucla-pls/reduce/archive/942e3d2644602622856eaabe4abc9c48e1557be1.tar.gz";
+  sha256 = "1m87ki48gcrmhchvx61z69ywjh9mwsfa5bk266m1j5gyl7hddadk";
 }
 

@@ -41,7 +41,6 @@ import qualified Data.Csv as C
 
 -- reduce-util
 import           Control.Reduce.Util
-import           Control.Reduce.Progression
 import           Control.Reduce.Boolean.CNF
 import qualified Control.Reduce.Boolean.LiteralSet as LS
 import           Control.Reduce.Util.Logger            as L
@@ -163,9 +162,7 @@ run strat = do
         (failure, result) <- runReductionProblem start (wf </> "reduction")
           (\_costfn -> generalizedBinaryReduction
             (\ipf is -> do
-              let p = calculateProgression ipf is
-              runReaderT (JReduce.Logic.logProgression (wf </> "progressions") vars p) scfg
-              return p
+              runReaderT (JReduce.Logic.logProgression (wf </> "progressions") vars ipf is) scfg
             )
             (\ipf c -> learnClauseCNF (LS.mkPositiveClause c) ipf)
             ipf
@@ -212,7 +209,6 @@ data Strategy
   | OverLogicGraph
   | OverLogicApprox
   | OverLogicDdmin
-  | OverLogicSingle
   | OverLogic
   deriving (Show)
 
