@@ -117,7 +117,8 @@ describeLogicProblem wf p = (\((a,b), c) -> (a,b,c)) <$>
 
     cnf = CNF
       . S.fromList
-      $ [ LS.fromList' [ ff f,  tt t ] | G.Edge () f t <- G.edges graph ]
+      . mapMaybe (\(G.Edge () f t) -> LS.fromList [ ff f,  tt t ])
+      $ G.edges graph
 
     fromVars :: IS.IntSet -> Maybe Target
     fromVars vars = preview _ITarget =<<
