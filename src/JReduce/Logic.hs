@@ -259,11 +259,11 @@ itemR f' = \case
 unBuilder :: Builder.Builder -> String
 unBuilder = LazyText.unpack . Builder.toLazyText
 
-showsVariable :: V.Vector (Fact, [Int]) -> Int -> ShowS
-showsVariable variables i =
+showsVariable :: (k -> Builder.Builder) -> V.Vector (k, [Int]) -> Int -> ShowS
+showsVariable displayK variables i =
   case variables V.!? i of
-    Just (fact, idx) ->
-      showString (unBuilder $ displayFact fact <> display (reverse idx))
+    Just (k, idx) ->
+      showString (unBuilder $ displayK k <> display (reverse idx))
     Nothing ->
       shows i
 
@@ -322,7 +322,7 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
           $ displayText key <> display (reverse idx) <> " " <> display v <> "\n"
           <> "  LV1 " <> displayString (showsStmtWith showsFact stmt "\n")
           <> "  LV2 " <> displayString (showsNnfWith showsFact nnf "\n")
-          <> "  LV3 " <> displayString (showsNnfWith (showsVariable variables) nnfAfter "\n")
+          <> "  LV3 " <> displayString (showsNnfWith (showsVariable displayFact variables) nnfAfter "\n")
           <> foldMap (("  " <>) . displayClause) (cnfClauses cnf)
 
       return cnf
@@ -355,7 +355,7 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
       showsFact = showString . unBuilder . displayFact
 
       displayClause c =
-        displayString (LS.displayImplication (showsVariable variables) c "\n")
+        displayString (LS.displayImplication (showsVariable displayFact variables) c "\n")
 
   L.info . L.displayf "Found %d items." $ L.length items
   L.info . L.displayf "Found %d facts." $ M.size factsToVar
@@ -385,14 +385,15 @@ computeCNF sv keyFun wf items = L.phase "Compute CNF" do
   return cnf
 
 logProgression ::
-  forall a m.
+  forall a m k.
   MonadIOReader Config m
   => FilePath
-  -> V.Vector (Fact, [Int])
+  -> (k -> Builder.Builder)
+  -> V.Vector (k, [Int])
   -> CNF
   -> IS.IntSet
   -> m (NE.NonEmpty IS.IntSet)
-logProgression prog variables cnf is = do
+logProgression prog displayK variables cnf is = do
   let (limitedCNF, lok) = limitCNF is cnf
   let progression = calculateProgression generateTotalGraphOrder cnf is
   dumpClosures <- view cfgDumpClosures
@@ -404,7 +405,7 @@ logProgression prog variables cnf is = do
       . foldMap
         (\a -> (fold
           . L.intersperse " | "
-          . map (displayShowS . showsVariable variables)
+          . map (displayShowS . showsVariable displayK variables)
           $ IS.toList a)
           <> "\n")
       $ progression
@@ -413,14 +414,14 @@ logProgression prog variables cnf is = do
       $ foldMap
         (\c ->
           displayString $ LS.displayImplication
-            (showsVariable variables . (lok V.!))
+            (showsVariable displayK variables . (lok V.!))
           c "\n"
         )
         (cnfClauses limitedCNF)
     LazyText.writeFile (indexedFile i "variableorder.txt")
       . LazyText.toLazyText
       $ foldMap
-        (\i -> displayShowS (showsVariable variables i) <> "\n")
+        (\i -> displayShowS (showsVariable displayK variables i) <> "\n")
         (generateTotalGraphOrder (V.length lok) limitedCNF)
 
   return progression
@@ -444,7 +445,7 @@ describeLogicProblem ::
   -> m (CNF, V.Vector (Fact, [Int]), Problem a IS.IntSet)
 describeLogicProblem cfg wf p = (\((a,b), c) -> (a,b,c)) <$> flip refineProblemA' p \s -> do
   (variables, _, keyFun) <- initializeKeyFunction cfg s wf
-  cnf <- computeCNF (showsVariable variables) keyFun wf
+  cnf <- computeCNF (showsVariable displayFact variables) keyFun wf
     $ itoListOf (deepSubelements itemR) (ITarget s)
 
   unless (isIPF cnf) $ do
@@ -484,7 +485,7 @@ describeGraphProblem ::
   -> m (Problem a [IS.IntSet])
 describeGraphProblem cfg wf p = flip refineProblemA p \s -> do
   (variables, mid, keyFun) <- initializeKeyFunction cfg s wf
-  cnf <- computeCNF (showsVariable variables) keyFun wf
+  cnf <- computeCNF (showsVariable displayFact variables) keyFun wf
     $ itoListOf (deepSubelements itemR) (ITarget s)
 
   let
@@ -517,7 +518,7 @@ describeGraphProblem cfg wf p = flip refineProblemA p \s -> do
       $ closures graph
 
   dumpGraphInfo wf
-    (graph <&> flip (showsVariable variables) "")
+    (graph <&> flip (showsVariable displayFact variables) "")
     core _targets
 
   -- ( fromIntegral . IS.size . fst

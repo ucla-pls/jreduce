@@ -139,7 +139,7 @@ targetProblem
   -> m (Problem a Target)
 targetProblem expandJar p1 = do
   p2 <- liftIO
-    $ refineProblemA (fmap (Just . undeepenTarget, ) 
+    $ refineProblemA (fmap (Just . undeepenTarget, )
       . deepenTarget expandJar) p1
   return $ meassure targetMetric p2
 
@@ -247,9 +247,9 @@ deepenTarget expandJar = imapM (readTargetFile . fileKeyToPath) where
     Just _ -> return . either (const (MetaData bst)) (ClassFile . removeOverrideAnnotations) $ do
         cf <- first show (readClassFile' True bst)
         first unlines $ fromClassFile cf
-      
+
     Nothing
-      | isJar fp && expandJar -> 
+      | isJar fp && expandJar ->
         handle (\(SomeException _) -> return $ MetaData bst) $ do
           d1 <-
             maybe (fail "Jar contains external links") return
@@ -262,10 +262,10 @@ deepenTarget expandJar = imapM (readTargetFile . fileKeyToPath) where
       | otherwise -> return $ MetaData bst
 
   -- TODO: Maybe model this instead
-  removeOverrideAnnotations = 
-    classMethods . traversed . methodAnnotations %~ 
+  removeOverrideAnnotations =
+    classMethods . traversed . methodAnnotations %~
     filter (notElemOf annotationType "java/lang/Override")
-      
+
 
 undeepenTarget :: Target -> DirTree BL.ByteString
 undeepenTarget = fmap writeTargetFile where

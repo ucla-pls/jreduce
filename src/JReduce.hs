@@ -127,7 +127,7 @@ run strat = do
           p4
         checkResults wf p4 (failure, result)
 
-      OverLogicGraph -> do
+      OverItemsGraph -> do
         p2 <- targetProblem True $ p1
         p3 <- JReduce.Logic.describeGraphProblem cfg wf p2
         runBinary start wf
@@ -135,7 +135,7 @@ run strat = do
           . set problemCost (fromIntegral . IS.size . IS.unions)
           $ p3
 
-      OverLogicApprox -> do
+      OverItemsApprox -> do
         p2 <- targetProblem True $ p1
         (ipf, _, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         runBinary start wf
@@ -144,7 +144,7 @@ run strat = do
           . set problemCost (fromIntegral . IS.size)
           $ p3
 
-      OverLogicDdmin -> do
+      OverItemsDdmin -> do
         p2 <- targetProblem True $ p1
         (ipf, _, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         let p4 = JReduce.Logic.approxLogicProblem ipf
@@ -156,13 +156,33 @@ run strat = do
           p4
         checkResults wf p4 (failure, result)
 
-      OverLogic -> do
+      OverItemsLogic -> do
         p2 <- targetProblem True $ p1
         (ipf, vars , p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
         (failure, result) <- runReductionProblem start (wf </> "reduction")
           (\_costfn -> generalizedBinaryReduction
+            (\ipf is -> flip runReaderT scfg $ JReduce.Logic.logProgression
+                (wf </> "progressions")
+                JReduce.Logic.displayFact
+                vars ipf is
+            )
+            (\ipf c -> learnClauseCNF (LS.mkPositiveClause c) ipf)
+            ipf
+          )
+          . meassure (Count "vars" . maybe 0 IS.size)
+          . set problemCost (fromIntegral . IS.size)
+          $ p3
+        checkResults wf p3 (failure, result)
+
+      OverClassesLogic -> do
+        p2 <- targetProblem True $ p1
+        (ipf, vars, p3) <- JReduce.Classes.describeLogicProblem wf p2
+        (failure, result) <- runReductionProblem start (wf </> "reduction")
+          (\_costfn -> generalizedBinaryReduction
             (\ipf is -> do
-              runReaderT (JReduce.Logic.logProgression (wf </> "progressions") vars ipf is) scfg
+              runReaderT (JReduce.Logic.logProgression (wf </> "progressions")
+                JReduce.Classes.displayKey
+                vars ipf is) scfg
             )
             (\ipf c -> learnClauseCNF (LS.mkPositiveClause c) ipf)
             ipf
@@ -205,11 +225,12 @@ run strat = do
 
 data Strategy
   = OverClasses Bool
+  | OverClassesLogic
   | OverItemsHdd
-  | OverLogicGraph
-  | OverLogicApprox
-  | OverLogicDdmin
-  | OverLogic
+  | OverItemsGraph
+  | OverItemsApprox
+  | OverItemsDdmin
+  | OverItemsLogic
   deriving (Show)
 
 strategyParser :: Parser Strategy
@@ -223,21 +244,22 @@ strategyParser =
     ( "reduce by different granularity (default: logic)."
       ++ "Choose between classes, logic, and logic+graph."
     )
-  <> value OverLogic
+  <> value OverItemsLogic
   where
     strategyReader :: ReadM Strategy
     strategyReader = maybeReader $ \s ->
       case Text.toLower . Text.pack $ s of
         "classes" -> Just $ OverClasses True
         "classes+flat" -> Just $ OverClasses False
+        "classes+logic" -> Just $ OverClassesLogic
         "items+hdd" ->
           Just $ OverItemsHdd
-        "logic+graph" ->
-          Just $ OverLogicGraph
-        "logic+approx" ->
-          Just $ OverLogicApprox
-        "logic+ddmin" ->
-          Just $ OverLogicDdmin
-        "logic" ->
-          Just $ OverLogic
+        "items+graph" ->
+          Just $ OverItemsGraph
+        "items+approx" ->
+          Just $ OverItemsApprox
+        "items+ddmin" ->
+          Just $ OverItemsDdmin
+        "items+logic" ->
+          Just $ OverItemsLogic
         _ -> Nothing
