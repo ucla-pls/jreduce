@@ -1,10 +1,10 @@
 name: jreduce
 description: |
-  A tool for reducing Java Bytecode files 
-version: 0.0.1
+  A tool for reducing Java Bytecode files
+version: 0.1.0
 author: Christian Gram Kalhauge
 maintainer: Christian Gram Kalhauge <kalhauge@cs.ucla.edu>
-synopsis: A tool for reducing Java Bytecode files 
+synopsis: A tool for reducing Java Bytecode files
 
 license: BSD3
 license-file: LICENSE
@@ -40,7 +40,7 @@ dependencies:
 library:
   source-dirs: src
 
-ghc-options: 
+ghc-options:
  - -Wall
  - -Wcompat
  - -Wincomplete-record-updates
@@ -51,7 +51,7 @@ executables:
   jreduce:
     source-dirs: app
     main: Main.hs
-    dependencies: 
+    dependencies:
       - jreduce
     ghc-options:
       - -O2
