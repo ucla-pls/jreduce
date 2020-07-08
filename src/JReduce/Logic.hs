@@ -54,6 +54,9 @@ import           Prelude                 hiding ( fail
                                                 , or
                                                 )
 
+-- import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BL
+
 -- jvmhs
 import           Jvmhs.Data.Type
 import           Jvmhs.TypeCheck
@@ -88,8 +91,8 @@ import qualified Data.Text.Lazy.Builder        as Builder
 
 -- reduce-util
 import           Control.Reduce.Boolean
-import           Control.Reduce.Graph
-import           Control.Reduce.Boolean.CNF
+import           Control.Reduce.Graph as G
+import           Control.Reduce.Boolean.CNF as CNF
 import           Control.Reduce.Progression
 import qualified Control.Reduce.Boolean.LiteralSet
                                                as LS
@@ -395,7 +398,7 @@ logProgression ::
   -> m (NE.NonEmpty IS.IntSet)
 logProgression prog displayK variables cnf is = do
   let (limitedCNF, lok) = limitCNF is cnf
-  let progression = calculateProgression generateTotalGraphOrder cnf is
+  let progression = calculateSimpleProgression cnf is
   dumpClosures <- view cfgDumpClosures
   when dumpClosures . liftIO $ do
     createDirectoryIfMissing True prog
@@ -418,15 +421,48 @@ logProgression prog displayK variables cnf is = do
           c "\n"
         )
         (cnfClauses limitedCNF)
-    LazyText.writeFile (indexedFile i "variableorder.txt")
-      . LazyText.toLazyText
-      $ foldMap
-        (\i -> displayShowS (showsVariable displayK variables i) <> "\n")
-        (generateTotalGraphOrder (V.length lok) limitedCNF)
+
+
+    -- LazyText.writeFile (indexedFile i "variableorder.txt")
+    --   . LazyText.toLazyText
+    --   $ foldMap
+    --     (\i -> displayShowS (showsVariable displayK variables i) <> "\n")
+    --     (generateTotalGraphOrder (V.length lok) limitedCNF)
+
+    printTotalGraphOrder' lok i (V.length lok) limitedCNF
 
   return progression
 
  where
+
+
+  showVar variables i =
+    showsVariable displayK variables i ""
+
+  printTotalGraphOrder' lok i n cnf = do
+    BL.writeFile (indexedFile i "graph.csv") $
+      G.writeEmptyCSV (showVar variables <$> graph)
+    -- writeCNF lok  (indexedFile i "unit-resolved.txt") cnf'
+    writeFile (indexedFile i "dff.txt") (show . map (fmap (showVar variables)) $ G.dff graph)
+    writeFile (indexedFile i "vars.txt") (show $ G.postOrd graph)
+
+   where
+    -- Just (LS.splitLiterals -> (_, _), cnf') = CNF.unitResolve cnf
+
+    -- Make this better, choose free variables first.
+    (graph, _) = G.buildGraphFromNodesAndEdges
+      [ (a, a) | a <- [ 0..n-1 ]]
+      [ G.Edge () t f
+      | c <- S.toList $ CNF.cnfClauses cnf
+      , let (ff, tt) = LS.splitLiterals c
+      , (f, t) <- liftM2 (,) (IS.toList ff) (IS.toList tt)
+      ]
+
+    -- lookup = V.fromList
+    --   . (IS.toList tt ++)
+    --   . reverse
+    --   . filter (Prelude.not . (`IS.member` tt)) $ G.postOrd graph
+
   indexedFile :: Int -> String -> FilePath
   indexedFile i name = printf (prog </> "%04i-%s") i name
 
@@ -452,18 +488,32 @@ describeLogicProblem cfg wf p = (\((a,b), c) -> (a,b,c)) <$> flip refineProblemA
     fail "The created CNF was not IPF"
 
   let
+    order =
+      generateTotalGraphOrder (V.length variables) cnf
+
+    revorder =
+      inverseOrder order
+
+    cnf' =
+      CNF.vmapCNF (revorder V.!) cnf
+
+    variables' =
+      V.map (variables V.!) order
+
+
+  let
     fromVars :: IS.IntSet -> Maybe Target
     fromVars vars = preview _ITarget =<<
       limit (deepReduction itemR) (`S.member` varset) (ITarget s)
       where
         varset = S.fromList . map snd
-          . mapMaybe (variables V.!?)
+          . mapMaybe (variables' V.!?)
           . IS.toList
           $ vars
 
   return
-    ( (cnf, variables)
-    , (fromVars, cnfVariables cnf)
+    ( (cnf', variables')
+    , (fromVars, cnfVariables cnf')
     )
 
 approxLogicProblem ::
