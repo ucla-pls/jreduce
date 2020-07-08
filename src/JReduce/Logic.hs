@@ -68,6 +68,7 @@ import qualified Jvmhs
 
 -- containers
 import qualified Data.IntMap.Strict            as IntMap
+import qualified Data.Tree as T
 
 -- directory
 import System.Directory
@@ -422,43 +423,39 @@ logProgression prog displayK variables cnf is = do
         )
         (cnfClauses limitedCNF)
 
-
     -- LazyText.writeFile (indexedFile i "variableorder.txt")
     --   . LazyText.toLazyText
     --   $ foldMap
     --     (\i -> displayShowS (showsVariable displayK variables i) <> "\n")
     --     (generateTotalGraphOrder (V.length lok) limitedCNF)
 
-    printTotalGraphOrder' lok i (V.length lok) limitedCNF
-
   return progression
 
  where
 
+  -- showVar variables i =
+  --   showsVariable displayK variables i ""
 
-  showVar variables i =
-    showsVariable displayK variables i ""
+  -- printTotalGraphOrder' lok i n cnf = do
+  --   BL.writeFile (indexedFile i "graph.csv") $
+  --     G.writeEmptyCSV (showVar variables <$> graph)
+  --   -- writeCNF lok  (indexedFile i "unit-resolved.txt") cnf'
+  --   writeFile (indexedFile i "dff.txt") (show . map (fmap (showVar variables)) $ G.dff graph)
+  --   writeFile (indexedFile i "vars.txt") (show $ G.postOrd graph)
 
-  printTotalGraphOrder' lok i n cnf = do
-    BL.writeFile (indexedFile i "graph.csv") $
-      G.writeEmptyCSV (showVar variables <$> graph)
-    -- writeCNF lok  (indexedFile i "unit-resolved.txt") cnf'
-    writeFile (indexedFile i "dff.txt") (show . map (fmap (showVar variables)) $ G.dff graph)
-    writeFile (indexedFile i "vars.txt") (show $ G.postOrd graph)
+  --  where
+  --   -- Just (LS.splitLiterals -> (_, _), cnf') = CNF.unitResolve cnf
 
-   where
-    -- Just (LS.splitLiterals -> (_, _), cnf') = CNF.unitResolve cnf
+  --   -- Make this better, choose free variables first.
+  --   (graph, _) = G.buildGraphFromNodesAndEdges
+  --     [ (a, a) | a <- [ 0..n-1 ]]
+  --     [ G.Edge () t f
+  --     | c <- S.toList $ CNF.cnfClauses cnf
+  --     , let (ff, tt) = LS.splitLiterals c
+  --     , (f, t) <- liftM2 (,) (IS.toList ff) (IS.toList tt)
+  --     ]
 
-    -- Make this better, choose free variables first.
-    (graph, _) = G.buildGraphFromNodesAndEdges
-      [ (a, a) | a <- [ 0..n-1 ]]
-      [ G.Edge () t f
-      | c <- S.toList $ CNF.cnfClauses cnf
-      , let (ff, tt) = LS.splitLiterals c
-      , (f, t) <- liftM2 (,) (IS.toList ff) (IS.toList tt)
-      ]
-
-    -- lookup = V.fromList
+  --   -- lookup = V.fromList
     --   . (IS.toList tt ++)
     --   . reverse
     --   . filter (Prelude.not . (`IS.member` tt)) $ G.postOrd graph
@@ -488,18 +485,58 @@ describeLogicProblem cfg wf p = (\((a,b), c) -> (a,b,c)) <$> flip refineProblemA
     fail "The created CNF was not IPF"
 
   let
-    order =
-      generateTotalGraphOrder (V.length variables) cnf
+    (cnf', lookup) = CNF.limitCNF (cnfVariables cnf) cnf
+
+    n = V.length lookup
+
+    (graph, _) = G.buildGraphFromNodesAndEdges
+      [ (a, a) | a <- [ 0..n-1 ]]
+      [ G.Edge () t f
+      | c <- S.toList $ CNF.cnfClauses cnf'
+      , let (ff, tt) = LS.splitLiterals c
+      , (f, t) <- liftM2 (,) (IS.toList ff) (IS.toList tt)
+      ]
+
+    order = V.fromList . reverse $ G.postOrd graph
+      -- generateTotalGraphOrder n cnf'
 
     revorder =
       inverseOrder order
 
-    cnf' =
-      CNF.vmapCNF (revorder V.!) cnf
+    cnf'' =
+      CNF.vmapCNF (revorder V.!) cnf'
 
     variables' =
-      V.map (variables V.!) order
+      V.map ((variables V.!?) . (lookup V.!)) order
 
+    grphvariables =
+      V.map (variables V.!?) lookup
+
+
+    showGraphVar i =
+      showsVariable displayFact (V.map fromJust grphvariables) i ""
+
+  whenM (view cfgDumpLogic) . liftIO $ do
+    BL.writeFile (wf </> "variable-graph.csv") $
+      G.writeEmptyCSV (showGraphVar <$> graph)
+
+    LazyText.writeFile (wf </> "cnf-2.txt")
+      . LazyText.toLazyText
+      $ foldMap
+        (\c ->
+          displayString $ LS.displayImplication
+            (\i -> (showsVariable displayFact (V.map fromJust variables') i))
+          c "\n"
+        )
+        (cnfClauses cnf'')
+    writeFile (wf </> "dff.txt") $
+      T.drawForest (map (fmap showGraphVar) $ G.dff graph)
+
+    LazyText.writeFile (wf </> "variableorder.txt") $
+      LazyText.toLazyText
+        $ foldMap
+        (\i -> displayShowS (showsVariable displayFact (V.map fromJust variables') i) <> "\n")
+        order
 
   let
     fromVars :: IS.IntSet -> Maybe Target
@@ -507,12 +544,12 @@ describeLogicProblem cfg wf p = (\((a,b), c) -> (a,b,c)) <$> flip refineProblemA
       limit (deepReduction itemR) (`S.member` varset) (ITarget s)
       where
         varset = S.fromList . map snd
-          . mapMaybe (variables' V.!?)
+          . mapMaybe (variables' V.!)
           . IS.toList
           $ vars
 
   return
-    ( (cnf', variables')
+    ( (cnf'', V.map fromJust variables')
     , (fromVars, cnfVariables cnf')
     )
 
