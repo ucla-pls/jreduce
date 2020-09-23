@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell     #-}
@@ -14,443 +15,251 @@ module JReduce where
 -- lens
 import           Control.Lens
 
--- deepseq
-import           Control.DeepSeq
-
--- zip-archive
-import           Codec.Archive.Zip
-
 -- mtl
 import           Control.Monad.Reader
+
+-- time
+import Data.Time.Clock
+
+-- text
+import qualified Data.Text as Text
 
 -- filepath
 import           System.FilePath
 
--- -- directory
--- import           System.Directory
-
--- cassava
-import qualified Data.Csv                              as C
-
 -- optparse-applicative
 import           Options.Applicative                   as A
-
--- reduce
-import           Data.Functor.Contravariant.PredicateM
 
 -- bytestring
 import qualified Data.ByteString.Lazy                  as BL
 
+-- reduce
+import           Control.Reduce
+
+-- casava
+import qualified Data.Csv as C
+
 -- reduce-util
 import           Control.Reduce.Util
-import           Control.Reduce.Util.Logger            as L hiding (update,
-                                                             view)
+import           Control.Reduce.Boolean.CNF
+import qualified Control.Reduce.Boolean.LiteralSet as LS
+import           Control.Reduce.Util.Logger            as L
 import           Control.Reduce.Util.OptParse
-import           System.Directory.Tree
+import           Control.Reduce.Metric
 
--- unordered-containers
-import qualified Data.HashMap.Strict                   as HashMap
-import qualified Data.HashSet                          as HashSet
+-- dirtree
+import           System.DirTree
 
 -- containers
+-- import qualified Data.Set                              as S
 import qualified Data.IntSet                           as IS
 
--- unliftio
-import           UnliftIO.Directory
-
--- text
-import qualified Data.Text.Lazy.Builder as Builder
-
--- time
-import Data.Time.Clock.System
-
 -- base
-import           Data.Foldable
-import           Data.Functor
-import           Data.Char
-import qualified Data.List as L
 import           Data.Maybe
-import           System.Exit
+import           Data.Monoid
+import           GHC.IO.Encoding (setLocaleEncoding, utf8)
 
-
--- jvhms
-import           Jvmhs
-
-
-data Validation
-  = Reject
-  | Shrink
-  | NoValidation
-  deriving (Show, Eq)
-
-data Strategy
-  = ByItem Validation
-  | ByClosure
-  deriving (Show, Eq)
-
-strategyReader :: ReadM Strategy
-strategyReader = maybeReader $ \s -> do
-  let
-    name = map toLower s
-    check = guard . L.isPrefixOf name
-  asum
-    [ check "closure" $> ByClosure
-    , check "reject-item" $> ByItem Reject
-    , check "shrink-item" $> ByItem Shrink
-    , check "item" $> ByItem NoValidation
-    ]
-
-data Config = Config
-  { _cfgLogger           :: !Logger
-  , _cfgCore             :: !(HashSet.HashSet ClassName)
-  , _cfgClassPath        :: ![ FilePath ]
-  , _cfgUseStdlib        :: !Bool
-  , _cfgJreFolder        :: !(Maybe FilePath)
-  , _cfgTarget           :: !FilePath
-  , _cfgOutput           :: !(Maybe FilePath)
-  , _cfgRecursive        :: !Bool
-  , _cfgStrategy         :: !Strategy
-  , _cfgReducerName      :: !ReducerName
-  , _cfgPredicateOptions :: !PredicateOptions
-  } deriving (Show)
-
-makeClassy ''Config
-
-instance HasLogger Config where
-  loggerL = cfgLogger
-
-configParser :: Parser (IO Config)
-configParser = do
-
-  _cfgTarget <-
-    strArgument
-    $ metavar "INPUT"
-    <> help "the path to the jar or folder to reduce."
-
-  _cfgLogger <- parseLogger
-
-  ioCore <-
-    fmap readClassNames . many . strOption
-    $ short 'c'
-    <> long "core"
-    <> metavar "CORE"
-    <> hidden
-    <> help "the core classes to not reduce. Can add a file of classes by prefixing @."
-
-  _cfgClassPath <-
-    fmap concat . many
-    . fmap splitClassPath
-    . strOption
-    $ long "cp"
-      <> hidden
-      <> metavar "CLASSPATH"
-      <> help ("the library classpath of things not reduced. "
-               ++ "This is useful if the core files is not in the reduction, like when you are"
-               ++ " reducing a library using a test-suite"
-               )
-
-  _cfgUseStdlib <-
-    switch $ long "stdlib"
-    <> hidden
-    <> help "load the standard library? This is unnecessary for most reductions."
-
-  _cfgJreFolder <-
-    optional . strOption $ long "jre"
-    <> hidden
-    <> metavar "JRE"
-    <> help "the location of the stdlib."
-
-
-  _cfgOutput <-
-    optional . strOption
-    $ short 'o'
-    <> long "output"
-    <> hidden
-    <> metavar "FILE"
-    <> help "set the output path."
-
-  _cfgRecursive <-
-    switch $
-    long "recursive"
-    <> short 'r'
-    <> hidden
-    <> help "remove other files and reduce internal jars."
-
-  _cfgStrategy <-
-    option strategyReader
-    $ short 'S'
-    <> long "strategy"
-    <> metavar "STRATEGY"
-    <> hidden
-    <> help ( "reduce by class instead of by closure (default: closure)." ++
-              "Choose between closure, reject-item, and item." )
-    <> value ByClosure
-
-  _cfgReducerName <-
-    parseReducerName
-
-  ioPredicateOptions <-
-    parsePredicateOptions "jreduce"
-
-  pure $ do
-    _cfgCore <- ioCore
-    _cfgPredicateOptions <- ioPredicateOptions
-    return $ Config {..}
-
-  where
-    readClassNames classnames' = do
-      names <- fmap concat . forM classnames' $ \cn ->
-        case cn of
-          '@':filename -> lines <$> readFile filename
-          _            -> return [cn]
-      return . HashSet.fromList . map strCls $ names
+-- jreduce
+import JReduce.Target
+import JReduce.Config
+import qualified JReduce.Logic
+import qualified JReduce.Classes
 
 main :: IO ()
 main = do
-  cfg <- join . execParser $
-    A.info (configParser <**> helper)
+  setLocaleEncoding utf8
+
+  (strat, getConfig) <- execParser $
+    A.info (((,) <$> strategyParser <*> configParser) <**> helper)
     ( fullDesc
     <> header "jreduce"
     <> progDesc "A command line tool for reducing java programs."
     )
 
-  runReaderT run cfg
+  cfg <- getConfig
 
-run :: ReaderT Config IO ()
-run = do
-  workFolder <- view $ cfgPredicateOptions . to predOptWorkFolder
-  (tclss, textra') <- unpackTarget (workFolder </> "unpacked")
-  let clss = toClassList tclss
+  runReaderT (L.phase "JReduce" $ run strat) cfg
 
-  textra <- view cfgRecursive >>= \case
-    True -> L.phase "remove extra files" $ do
-      let extras = toFileList textra'
-      predOpt' <- view cfgPredicateOptions
-      let predOpt = predOpt' { predOptWorkFolder = workFolder </> "extra-files" }
-      toPredicateM predOpt (fromDirTree "classes" . (tclss <>)  . fromJust . fromFileList . unCount) (counted extras) >>= \case
-        Just predicate -> do
-          rname <- view cfgReducerName
-          reduce rname Nothing predicate counted extras >>= \case
-            Just reduction -> do
-              return . fromJust . fromFileList . unCount $ reduction
-            Nothing -> do
-              failwith "The reduced result did not satisfy the predicate (flaky?)"
+newtype DirTreeMetric = DirTreeMetric Int
+
+dirTreeMetric :: Maybe (DirTree BL.ByteString) -> DirTreeMetric
+dirTreeMetric =
+  DirTreeMetric . fromIntegral . getSum . (foldMap . foldMap $ Sum . BL.length)
+
+instance Metric DirTreeMetric where
+  order = Const ["bytes"]
+  fields (DirTreeMetric a) = [("bytes" C..= a)]
+  displayMetric (DirTreeMetric a) =
+    display (a `div` 1000) <> displayString " Kb"
+
+run :: Strategy -> ReaderT Config IO ()
+run strat = do
+  scfg @ Config {..} <- ask
+  L.info "Started JReduce."
+  start <- liftIO getCurrentTime
+
+  result <- withWorkFolder _cfgWorkFolder $ \wf -> do
+
+    p0 <- orFail "Couldn't run problem in time"
+      =<< setupProblemFromFile (wf </> "initial") _cfgCmdTemplate _cfgTarget
+
+    cfg <- view cfgLogicConfig
+    let p1 = meassure dirTreeMetric p0
+    case strat of
+      OverClasses b -> do
+        p2 <- targetProblem b $ p1
+        p3 <- JReduce.Classes.describeProblem wf p2
+        runBinary start wf
+          . meassure (Count "scc" . maybe 0 length)
+          . set problemCost (fromIntegral . IS.size . IS.unions)
+          $ p3
+
+      OverItemsHdd -> do
+        p2 <- targetProblem True $ p1
+        let p4 = meassure (Count "items" . length)
+              . toReductionDeep JReduce.Logic.itemR
+              . liftProblem
+                  (JReduce.Logic.ITarget)
+                  (fromJust . preview JReduce.Logic._ITarget)
+              $ p2
+        (failure, result) <- runReductionProblem start (wf </> "reduction")
+          (const hdd)
+          p4
+        checkResults wf p4 (failure, result)
+
+      OverItemsGraph -> do
+        p2 <- targetProblem True $ p1
+        p3 <- JReduce.Logic.describeGraphProblem cfg wf p2
+        runBinary start wf
+          . meassure (Count "scc" . maybe 0 length)
+          . set problemCost (fromIntegral . IS.size . IS.unions)
+          $ p3
+
+      OverItemsApprox -> do
+        p2 <- targetProblem True $ p1
+        (ipf, _, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        runBinary start wf
+          . JReduce.Logic.approxLogicProblem ipf
+          . meassure (Count "vars" . maybe 0 IS.size)
+          . set problemCost (fromIntegral . IS.size)
+          $ p3
+
+      OverItemsDdmin -> do
+        p2 <- targetProblem True $ p1
+        (ipf, _, p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        let p4 = JReduce.Logic.approxLogicProblem ipf
+              . meassure (Count "vars" . maybe 0 IS.size)
+              . set problemCost (fromIntegral . IS.size)
+              $ p3
+        (failure, result) <- runReductionProblem start (wf </> "reduction")
+          (const ddmin)
+          p4
+        checkResults wf p4 (failure, result)
+
+      OverItemsLogic -> do
+        p2 <- targetProblem True $ p1
+        (ipf, vars , p3) <- JReduce.Logic.describeLogicProblem cfg wf p2
+        (failure, result) <- runReductionProblem start (wf </> "reduction")
+          (\_costfn -> generalizedBinaryReduction
+            (\ipf is -> flip runReaderT scfg $ JReduce.Logic.logProgression
+                (wf </> "progressions")
+                JReduce.Logic.displayFact
+                vars ipf is
+            )
+            (\ipf c -> learnClauseCNF (LS.mkPositiveClause c) ipf)
+            ipf
+          )
+          . meassure (Count "vars" . maybe 0 IS.size)
+          . set problemCost (fromIntegral . IS.size)
+          $ p3
+        checkResults wf p3 (failure, result)
+
+      OverClassesLogic -> do
+        p2 <- targetProblem True $ p1
+        (ipf, vars, p3) <- JReduce.Classes.describeLogicProblem wf p2
+        (failure, result) <- runReductionProblem start (wf </> "reduction")
+          (\_costfn -> generalizedBinaryReduction
+            (\ipf is -> do
+              runReaderT (JReduce.Logic.logProgression (wf </> "progressions")
+                JReduce.Classes.displayKey
+                vars ipf is) scfg
+            )
+            (\ipf c -> learnClauseCNF (LS.mkPositiveClause c) ipf)
+            ipf
+          )
+          . meassure (Count "vars" . maybe 0 IS.size)
+          . set problemCost (fromIntegral . IS.size)
+          $ p3
+        checkResults wf p3 (failure, result)
+
+  -- Output the results
+  outputResults result
+
+  where
+    checkResults wf p3 (failure, result) = do
+      case failure of
+        Just msg ->
+          L.warn $ "Reduction failed: " <> display msg
         Nothing ->
-          failwith "Could not satisify the predicate."
-    False -> return $ textra'
+          L.info $ "Reduction successfull."
 
-  classreader <- preloadClasses
-  void . flip runCachedClassPoolT (defaultFromReader classreader) $ do
-    setupPredicate (classesToFiles textra) clss >>= \case
-      Just predicate -> do
-        t' <- fromMaybe (fromClasses clss) <$> classReduction predicate clss
-        liftRIO (runPredicateM predicate t') >>= \case
-          True -> outputResults workFolder textra (ccContent t')
-          False ->
-            failwith "The reduced result did not satisfy the predicate (flaky?)"
-      Nothing -> do
-        failwith "Could not satisfy the predicate."
+      local (redKeepFolders .~ True) $
+        void $ checkSolution (wf </> "final") p3 result
+
+      return (fromJust $ _problemExtractBase p3 result)
+
+    runBinary start wf p3 = do
+      (failure, result) <- runReductionProblem start (wf </> "reduction")
+        genericBinaryReduction
+        $ p3
+      checkResults wf p3 (failure, result)
+
+
+    outputResults target = do
+      inputFile <- view cfgTarget
+      possibleOutput <- view cfgOutput
+      liftIO . flip (writeDirTree BL.writeFile) target
+        =<< findOutputFile inputFile possibleOutput
+
+    orFail msg = maybe (fail msg) return
+
+data Strategy
+  = OverClasses Bool
+  | OverClassesLogic
+  | OverItemsHdd
+  | OverItemsGraph
+  | OverItemsApprox
+  | OverItemsDdmin
+  | OverItemsLogic
+  deriving (Show)
+
+strategyParser :: Parser Strategy
+strategyParser =
+  option strategyReader
+  $ short 'S'
+  <> long "strategy"
+  <> metavar "STRATEGY"
+  <> hidden
+  <> help
+    ( "reduce by different granularity (default: logic)."
+      ++ "Choose between classes, logic, and logic+graph."
+    )
+  <> value OverItemsLogic
   where
-    failwith ::
-      (HasLogger env, MonadReader env m, MonadIO m)
-      => Builder.Builder
-      -> m a
-    failwith msg = do
-      L.err msg
-      liftIO $ exitWith (ExitFailure 1)
-
-    outputResults workFolder textra t' =
-      view cfgOutput >>= \case
-      Just output
-        | isJar output -> liftIO $ do
-            let tmpFolder = (workFolder </> output)
-            writeTreeWith copySame $ tmpFolder :/ classesToFiles textra t'
-            arc <- withCurrentDirectory tmpFolder $ do
-              addFilesToArchive [OptRecursive] emptyArchive ["."]
-            BL.writeFile output (fromArchive arc)
-        | otherwise -> liftIO $ do
-          writeTreeWith copySame $ output :/ classesToFiles textra t'
-      Nothing ->
-        L.warn "Did not output to output."
-
-    copySame fp = \case
-      SameAs fp' -> copyFile fp' fp
-      Content bs -> BL.writeFile fp bs
-
-    toClassList =
-      catMaybes
-      . map (\(a,b) -> (,b) <$> asClassName a)
-      . toFileList
-
-    classesToFiles textra clss =
-      textra <> classesToFiles' clss
-
-    classesToFiles' clss =
-      fromJust . fromFileList . map (_1 %~ relativePathOfClass) $ clss
-
-data ClassCounter a = ClassCounter
-  { ccClosures :: Int
-  , ccClasses  :: Int
-  , ccContent  :: a
-  } deriving (Functor)
-
-fromClasses :: Foldable t => t a -> ClassCounter (t a)
-fromClasses classData =
-  ClassCounter 0 (length classData) classData
-
-type ClassFiles = ClassCounter [(ClassName, FileContent)]
-
-instance Metric (ClassCounter a) where
-  order = Const ["scc", "classes"]
-  fields ClassCounter {..} =
-    [ "scc" C..= ccClosures
-    , "classes" C..= ccClasses
-    ]
-
-setupPredicate ::
-  (HasLogger env, HasConfig env, MonadReader env m, MonadClassPool m, MonadIO m)
-  => ([(ClassName, FileContent)] -> DirTree FileContent)
-  -> [(ClassName, FileContent)]
-  -> m ( Maybe ( PredicateM (ReaderT env IO) ClassFiles ) )
-setupPredicate classesToFiles classData = L.phase "Setup Predicate" $ do
-  predOpt <- view cfgPredicateOptions
-  liftRIO $
-    toPredicateM
-      predOpt
-      (fromDirTree "classes" . classesToFiles . ccContent)
-      $ fromClasses classData
-
-classReduction ::
-  forall m env a.
-  (HasLogger env, HasConfig env, MonadReader env m, MonadClassPool m, MonadIO m)
-  => PredicateM (ReaderT env IO) (ClassCounter [(ClassName, a)])
-  -> [(ClassName, a)]
-  -> m (Maybe (ClassCounter [(ClassName, a)]))
-classReduction predicate targets = L.phase "Class Reduction" $ do
-  (coreFp, flip shrink (map fst targets) -> grph) <- computeClassGraph
-  L.debug $ "Possible reduction left:" <-> display (graphSize grph)
-
-  rname <- view cfgReducerName
-
-  view cfgStrategy >>= \case
-    ByItem validate -> do
-      predicate' <- case validate of
-        NoValidation ->
-          return predicate
-
-        Reject -> do
-          return . PredicateM $ \x ->
-            if flip isClosedIn grph . map fst . ccContent $ x
-            then runPredicateM predicate x
-            else return False
-
-        Shrink -> do
-          return $
-            (computeClassCounter.toValues.collapse grph.map fst.ccContent)
-            `contramap` predicate
-
-      liftRIO
-        . reduce rname Nothing predicate' computeClassCounter $ targets
-        where
-          computeClassCounter =
-            (\a -> ClassCounter (length a) (length a) a) . (coreFp ++)
-
-    ByClosure ->  do
-      closures' <- computeClosuresOfGraph grph
-
-      liftRIO
-        . reduce rname (Just $ IS.size . IS.unions)
-            predicate (fromIntSet coreFp grph)
-        $ closures'
-
-  where
-    fromIntSet coreFp graph scc = do
-      let
-        is = IS.unions scc
-        cl = coreFp ++ (toValues $ labels (IS.toList is) graph)
-      ClassCounter
-        { ccClosures = length scc
-        , ccClasses = length cl
-        , ccContent = cl
-        }
-
-    computeClassGraph = L.phase "Compute Class Graph" $ do
-      (coreCls, grph) <- forwardRemove <$> mkClassGraph <*> view cfgCore
-      let coreFp = toValues coreCls
-      L.debug
-        $ "The core closure is" <-> display (length coreCls)
-        <-> "classes," <-> display (length coreFp)
-        <-> "in the target."
-      return (coreFp, grph)
-
-    computeClosuresOfGraph grph = L.phase "Compute closures of graph:" $ do
-      let closures' = closures grph
-      L.debug $ "Found" <-> display (length closures') <-> "SCCs."
-      return $!! closures'
-
-    graphSize = sumOf (grNodes . like (1 :: Int))
-
-    values = HashMap.fromList targets
-
-    toValues lst =
-      let keepThese = HashSet.fromList $ lst
-      in HashMap.toList (HashMap.intersection values (HashSet.toMap keepThese))
-
-
-unpackTarget ::
-  (MonadReader s m, MonadIO m, HasLogger s, HasConfig s)
-  => FilePath -> m (DirTree FileContent, DirTree FileContent)
-unpackTarget folder = do
-  L.phase ("Unpacking target to" <-> display folder) $ do
-    target <- view cfgTarget
-    dx <- doesDirectoryExist target
-    if dx
-      then liftIO $ do
-        _ :/ tree <- readTree target
-        writeTreeWith (flip copyFileWithMetadata) (folder :/ tree)
-      else liftIO $ do
-        arch <- toArchive <$> BL.readFile target
-        extractFilesFromArchive [OptDestination folder] arch
-
-    _ :/ tree <- liftIO $ fmap SameAs <$> readTree folder
-
-    return
-      ( filterTreeOnFiles isClass tree
-      , filterTreeOnFiles (not . isClass) tree
-      )
-  where
-    isClass fn = takeExtension fn == ".class"
-
-liftRIO ::
-  (MonadReader env m, MonadIO m)
-  => ReaderT env IO a -> m a
-liftRIO m = do
-  x <- ask
-  liftIO $ runReaderT m x
-
-preloadClasses :: ReaderT Config IO ClassPreloader
-preloadClasses = L.phase "Preloading Classes" $ do
-  cls <- createClassLoader
-  (classreader, numclasses) <- liftIO $ do
-    classreader <- preload cls
-    numclasses <- length <$> classes classreader
-    return (classreader, numclasses)
-  L.debug $ "Found" <-> display numclasses <-> "classes."
-  return classreader
-
--- | Create a class loader from the config
-createClassLoader ::
-  (HasConfig env, MonadReader env m, MonadIO m)
-  => m ClassLoader
-createClassLoader = do
-  cfg <- ask
-  let cp = cfg ^. cfgTarget : cfg ^. cfgClassPath
-  if cfg ^. cfgUseStdlib
-    then
-      case cfg ^. cfgJreFolder of
-        Nothing ->
-          liftIO $ fromClassPath cp
-        Just jre ->
-          liftIO $ fromJreFolder cp jre
-    else
-      return $ ClassLoader [] [] cp
+    strategyReader :: ReadM Strategy
+    strategyReader = maybeReader $ \s ->
+      case Text.toLower . Text.pack $ s of
+        "classes" -> Just $ OverClasses True
+        "classes+flat" -> Just $ OverClasses False
+        "classes+logic" -> Just $ OverClassesLogic
+        "items+hdd" ->
+          Just $ OverItemsHdd
+        "items+graph" ->
+          Just $ OverItemsGraph
+        "items+approx" ->
+          Just $ OverItemsApprox
+        "items+ddmin" ->
+          Just $ OverItemsDdmin
+        "items+logic" ->
+          Just $ OverItemsLogic
+        _ -> Nothing

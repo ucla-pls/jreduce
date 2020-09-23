@@ -1,10 +1,10 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.31.1.
+-- This file has been generated from package.yaml by hpack version 0.32.0.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 51f4bf2bf6b3b186b1bec222d6edcdf0f26a299546f8f0e54428214800ac267c
+-- hash: 0a2cef50f8f6fb19273c301f41176e8a370a964abf5e7afa95eac01a98805ccd
 
 name:           jreduce
 version:        0.0.1
@@ -26,17 +26,28 @@ source-repository head
 library
   exposed-modules:
       JReduce
+      JReduce.Config
+      JReduce.OverClasses
+      JReduce.OverDeep
+      JReduce.OverLogic
+      JReduce.OverStubs
+      JReduce.Target
   other-modules:
       Paths_jreduce
   hs-source-dirs:
       src
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints
   build-depends:
-      base >=4.10 && <4.13
+      aeson
+    , base >=4.10 && <4.13
     , bytestring
     , cassava
     , containers
     , deepseq
+    , directory
+    , dirtree
     , filepath
+    , jvm-binary
     , jvmhs
     , lens
     , lens-action
@@ -46,8 +57,10 @@ library
     , reduce-util
     , text
     , time
+    , transformers
     , unliftio
     , unordered-containers
+    , vector
     , zip-archive
   default-language: Haskell2010
 
@@ -57,15 +70,19 @@ executable jreduce
       Paths_jreduce
   hs-source-dirs:
       app
-  ghc-options: -O2 -threaded
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -O2 -threaded
   build-depends:
-      base >=4.10 && <4.13
+      aeson
+    , base >=4.10 && <4.13
     , bytestring
     , cassava
     , containers
     , deepseq
+    , directory
+    , dirtree
     , filepath
     , jreduce
+    , jvm-binary
     , jvmhs
     , lens
     , lens-action
@@ -75,7 +92,9 @@ executable jreduce
     , reduce-util
     , text
     , time
+    , transformers
     , unliftio
     , unordered-containers
+    , vector
     , zip-archive
   default-language: Haskell2010
