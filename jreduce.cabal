@@ -1,15 +1,15 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.32.0.
+-- This file has been generated from package.yaml by hpack version 0.33.0.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 0a2cef50f8f6fb19273c301f41176e8a370a964abf5e7afa95eac01a98805ccd
+-- hash: 99607ce07f63ccf65cad3e5db78f0509bb5ec7240de89002afeec481215643ec
 
 name:           jreduce
-version:        0.0.1
+version:        0.1.0
 synopsis:       A tool for reducing Java Bytecode files
-description:    A tool for reducing Java Bytecode files 
+description:    A tool for reducing Java Bytecode files
 category:       Language, Java, JVM
 homepage:       https://github.com/ucla-pls/jvmhs#readme
 bug-reports:    https://github.com/ucla-pls/jvmhs/issues
@@ -26,11 +26,9 @@ source-repository head
 library
   exposed-modules:
       JReduce
+      JReduce.Classes
       JReduce.Config
-      JReduce.OverClasses
-      JReduce.OverDeep
-      JReduce.OverLogic
-      JReduce.OverStubs
+      JReduce.Logic
       JReduce.Target
   other-modules:
       Paths_jreduce
