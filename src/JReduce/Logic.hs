@@ -535,7 +535,7 @@ describeLogicProblem cfg wf p = (\((a,b), c) -> (a,b,c)) <$> flip refineProblemA
     LazyText.writeFile (wf </> "variableorder.txt") $
       LazyText.toLazyText
         $ foldMap
-        (\i -> displayShowS (showsVariable displayFact (V.map fromJust variables') i) <> "\n")
+        (\i -> displayShowS (showsVariable displayFact (V.map fromJust grphvariables) i) <> "\n")
         order
 
   let
