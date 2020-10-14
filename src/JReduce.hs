@@ -127,9 +127,9 @@ run strat = do
           p4
         checkResults wf p4 (failure, result)
 
-      OverItemsGraph -> do
+      OverItemsGraph choose_first -> do
         p2 <- targetProblem True $ p1
-        p3 <- JReduce.Logic.describeGraphProblem cfg wf p2
+        p3 <- JReduce.Logic.describeGraphProblem cfg choose_first wf p2
         runBinary start wf
           . meassure (Count "scc" . maybe 0 length)
           . set problemCost (fromIntegral . IS.size . IS.unions)
@@ -227,7 +227,7 @@ data Strategy
   = OverClasses Bool
   | OverClassesLogic
   | OverItemsHdd
-  | OverItemsGraph
+  | OverItemsGraph Bool
   | OverItemsApprox
   | OverItemsDdmin
   | OverItemsLogic
@@ -254,8 +254,10 @@ strategyParser =
         "classes+logic" -> Just $ OverClassesLogic
         "items+hdd" ->
           Just $ OverItemsHdd
-        "items+graph" ->
-          Just $ OverItemsGraph
+        "items+graph+first" ->
+          Just $ OverItemsGraph True
+        "items+graph+last" ->
+          Just $ OverItemsGraph False
         "items+approx" ->
           Just $ OverItemsApprox
         "items+ddmin" ->

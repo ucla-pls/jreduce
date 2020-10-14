@@ -567,17 +567,21 @@ displayShowS f = displayString (f "")
 describeGraphProblem ::
   MonadIOReader Config m
   => LogicConfig
+  -> Bool
+  -- ^ choose the first item
   -> FilePath
   -> Problem a Target
   -> m (Problem a [IS.IntSet])
-describeGraphProblem cfg wf p = flip refineProblemA p \s -> do
+describeGraphProblem cfg choose_first wf p = flip refineProblemA p \s -> do
   (variables, mid, keyFun) <- initializeKeyFunction cfg s wf
   cnf <- computeCNF (showsVariable displayFact variables) keyFun wf
     $ itoListOf (deepSubelements itemR) (ITarget s)
 
   let
     (required, edges') = fold
-      [ case over both IS.minView $ LS.splitLiterals clause of
+      [ case (if choose_first
+          then over both IS.minView
+          else over both IS.maxView) $ LS.splitLiterals clause of
           (Nothing    , Just (t, _)) -> (IS.singleton t, mempty)
           (Just (f, _), Just (t, _)) -> (mempty, S.singleton (f,t))
           _                          -> error "CNF is not IPF"
