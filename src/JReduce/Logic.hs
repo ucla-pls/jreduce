@@ -471,7 +471,9 @@ logProgression prog displayK variables cnf is = do
 
 describeLogicProblem ::
   forall a m.
-  MonadIOReader Config m
+  ( MonadFail m
+  , MonadIOReader Config m
+  )
   => LogicConfig
   -> FilePath
   -> Problem a Target

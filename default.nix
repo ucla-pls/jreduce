@@ -18,7 +18,7 @@ in
       };
     name = "jreduce";
     source-overrides = {
-      inherit (fix) reduce reduce-util hspec-hedgehog jvmhs dirtree jvm-binary;
+      inherit (fix) reduce reduce-util hspec-hedgehog jvmhs jvm-binary;
     };
     overrides = hsuper: hself: { };
     modifier = drv:

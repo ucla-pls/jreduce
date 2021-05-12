@@ -1,5 +1,7 @@
+# Auto-generated with fixnix (version 0.0.0)
+# add gh:ucla-pls/jvmhs
 builtins.fetchTarball {
-  name   = "jvmhs_master_2020-04-29";
-  url    = "https://github.com/ucla-pls/jvmhs/archive/ca73df70f8d7ca57e05c876dfc08e3d929866e2f.tar.gz";
-  sha256 = "1l71i0lc3m2xvqi9rhlsrm9xcff4kl0215ck5daksjjnh0y5dsr0";
+  name   = "jvmhs_914390";
+  url    = "https://github.com/ucla-pls/jvmhs/archive/9143907131a5062c9a52c34cee60776a96b9ea1f.tar.gz";
+  sha256 = "10gj78agbwsjkz17kj2davmngvkq5l13ks2j7slbbz2y1nwjd7fn";
 }

@@ -19,12 +19,12 @@ packages:
   original:
     hackage: dotgen-0.4.2
 - completed:
-    hackage: jvm-binary-0.9.0@sha256:ea25a04fa4700b9fae28dce723a5e01fb9824e0f0e5173a9e103f212a84d75b5,4253
+    hackage: jvm-binary-0.10.0@sha256:749932b0bc0e3e8deb731f375b2f4d03512d581c4066414ba98f48ae9bd1f2e9,4177
     pantry-tree:
       size: 4291
-      sha256: 031719909b8d218a774f1e7ab9882e4c900e4572f088764ca828248e109954db
+      sha256: 13580c5e6d907db1196e7056a0899ee346e5a23eed83fe843e36049f0eae3e3f
   original:
-    hackage: jvm-binary-0.9.0
+    hackage: jvm-binary-0.10.0
 - completed:
     hackage: dirtree-0.1.3@sha256:7c563046bb70b13cd6e04c42ff4e20f2cd0d63501fb22401d2d15335b688c83d,1712
     pantry-tree:
@@ -34,15 +34,15 @@ packages:
     hackage: dirtree-0.1.3
 - completed:
     name: jvmhs
-    version: 0.1.0
+    version: 0.1.1
     git: https://github.com/ucla-pls/jvmhs.git
     pantry-tree:
       size: 7858
-      sha256: 382815ac250fdbd1f12dcdb2faa140ce2ba4c27f84508a7e165c4552d2cac0b5
-    commit: 5f81a4aa0d982f56ef95135e1ab62495d51b9f9e
+      sha256: 7968973f9a2d1fc1e110f1f8ce7a4000bc3f91998c5370280315daf7167aa48f
+    commit: 9143907131a5062c9a52c34cee60776a96b9ea1f
   original:
     git: https://github.com/ucla-pls/jvmhs.git
-    commit: 5f81a4aa0d982f56ef95135e1ab62495d51b9f9e
+    commit: 9143907131a5062c9a52c34cee60776a96b9ea1f
 - completed:
     subdir: reduce
     name: reduce
@@ -50,12 +50,12 @@ packages:
     git: https://github.com/ucla-pls/reduce.git
     pantry-tree:
       size: 716
-      sha256: 61f0e8d98477815e333f6089913133b29a15796f63c068472cb6cd3a25175e10
-    commit: 8df6ccb65d2bc22af9135d80113097217db3cf7b
+      sha256: 7c2bef341a9d795079becc028c8634ab0c42d67a7cde7bd8b2d2b3728320b417
+    commit: ba748b0cfcd9141cb7a6542b8808d477a340beaf
   original:
     subdir: reduce
     git: https://github.com/ucla-pls/reduce.git
-    commit: 8df6ccb65d2bc22af9135d80113097217db3cf7b
+    commit: ba748b0cfcd9141cb7a6542b8808d477a340beaf
 - completed:
     subdir: reduce-util
     name: reduce-util
@@ -63,15 +63,15 @@ packages:
     git: https://github.com/ucla-pls/reduce.git
     pantry-tree:
       size: 2946
-      sha256: 7310bdb0e4e281ba9ad5b781e379b87ce5a2e4a399091a3e7a1652d89e37b6b7
-    commit: 8df6ccb65d2bc22af9135d80113097217db3cf7b
+      sha256: ee80f827eea3a6aff7c8cc4be3af30f5ac0ad2ca83e85fb9a1d6af33051c7b9d
+    commit: ba748b0cfcd9141cb7a6542b8808d477a340beaf
   original:
     subdir: reduce-util
     git: https://github.com/ucla-pls/reduce.git
-    commit: 8df6ccb65d2bc22af9135d80113097217db3cf7b
+    commit: ba748b0cfcd9141cb7a6542b8808d477a340beaf
 snapshots:
 - completed:
-    size: 524996
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/14/27.yaml
-    sha256: 7ea31a280c56bf36ff591a7397cc384d0dff622e7f9e4225b47d8980f019a0f0
-  original: lts-14.27
+    size: 567672
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/17/11.yaml
+    sha256: 03181cdbeb671eb605bbcf6f285bea4d094b6ac7433a0e14a9f1dd54ad995938
+  original: lts-17.11
