@@ -35,6 +35,9 @@ import           Control.Reduce.Command
 import qualified Data.Text    as Text
 import qualified Data.Text.IO as Text
 
+-- filepath
+import System.FilePath (dropTrailingPathSeparator)
+
 -- aeson
 import qualified Data.Aeson
 
@@ -183,7 +186,8 @@ parseDumpConfig = do
 configParser :: Parser (IO Config)
 configParser = do
   _cfgTarget <-
-    strArgument
+    fmap dropTrailingPathSeparator 
+    $ strArgument
     $ metavar "INPUT"
     <> help "the path to the jar or folder to reduce."
 
