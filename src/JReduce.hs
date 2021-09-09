@@ -241,8 +241,8 @@ strategyParser =
   <> metavar "STRATEGY"
   <> hidden
   <> help
-    ( "reduce by different granularity (default: logic)."
-      ++ "Choose between classes, logic, and logic+graph."
+    ( "reduce by different granularity (default: items+logic)."
+      ++ "Choose between classes, items+logic, and items+graph+first/last."
     )
   <> value OverItemsLogic
   where

@@ -50,8 +50,8 @@ Usage: jreduce INPUT [-R|--reducer RED] CMD [ARG..]
 
 Available options:
   -S,--strategy STRATEGY   reduce by different granularity (default:
-                           logic).Choose between classes, logic, and
-                           logic+graph.
+                           items+logic).Choose between classes, items+logic, and
+                           items+graph+first/last.
   INPUT                    the path to the jar or folder to reduce.
   -v                       make it more verbose.
   -q                       make it more quiet.
