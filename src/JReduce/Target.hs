@@ -64,6 +64,9 @@ import qualified Data.Text.Lazy                as LazyText
 -- nfdata
 import           Control.DeepSeq
 
+-- mtl
+import Control.Monad.Reader
+
 -- base
 import           Control.Exception
 import           Control.Monad
@@ -133,14 +136,15 @@ contentR f = \case
   a     -> pure $ Just a
 
 targetProblem
-  :: MonadIOReader env m
+  :: (MonadIOReader env m, L.HasLogger env)
   => Bool
   -> Problem a (DirTree BL.ByteString)
   -> m (Problem a Target)
-targetProblem expandJar p1 = do
+targetProblem expandJar p1 = L.phase "Refining Problem" $ do
+  lc <- asks (view L.loggerL)
   p2 <- liftIO
     $ refineProblemA (fmap (Just . undeepenTarget, )
-      . deepenTarget expandJar) p1
+      . deepenTarget lc expandJar) p1
   return $ meassure targetMetric p2
 
 
@@ -240,26 +244,35 @@ instance Metric TargetMetric where
       <-> display _targetMetricOtherFiles
       <-> displayString "other"
 
-deepenTarget :: Bool -> DirTree BL.ByteString -> IO Target
-deepenTarget expandJar = imapM (readTargetFile . fileKeyToPath) where
+deepenTarget :: LoggerConfig -> Bool -> DirTree BL.ByteString -> IO Target
+deepenTarget lc expandJar = imapM (readTargetFile . fileKeyToPath) where
   readTargetFile :: FilePath -> BL.ByteString -> IO Content
-  readTargetFile fp bst = case asClassName fp of
-    Just _ -> return . either (const (MetaData bst)) (ClassFile . removeOverrideAnnotations) $ do
-        cf <- first show (readClassFile' True bst)
-        first unlines $ fromClassFile cf
+  readTargetFile fp bst = do 
+    case asClassName fp of
+      Just _ -> runLogger lc $ do
+        L.debug $ "Reading " <> L.display fp <> " as class file"
+        return . either (const (MetaData bst)) (ClassFile . removeOverrideAnnotations) $ do
+          cf <- first show (readClassFile' True bst)
+          first unlines $ fromClassFile cf
 
-    Nothing
-      | isJar fp && expandJar ->
-        handle (\(SomeException _) -> return $ MetaData bst) $ do
-          d1 <-
-            maybe (fail "Jar contains external links") return
-            <$> followInternalLinks
-            .   directory
-            $   toArchive bst
-            ^.  files
-          d2 <- imapM (readTargetFile . fileKeyToPath) d1
-          return . Jar $ d2 ^?! _Directory
-      | otherwise -> return $ MetaData bst
+      Nothing
+        | (isJar fp || fp == "") && expandJar -> do
+          handle (\(SomeException _) -> do
+            runLogger lc $ L.warn $ "Reading " <> L.display fp <> " as a jar, but failed."
+            pure $ MetaData bst
+            ) $ do
+            d1 <-
+              maybe (fail "Jar contains external links") return
+              <$> followInternalLinks
+              .   directory
+              $   toArchive bst
+              ^.  files
+            d2 <- imapM (readTargetFile . fileKeyToPath) d1
+            runLogger lc $ L.debug $ "Reading " <> L.display fp <> " as a jar"
+            return . Jar $ d2 ^?! _Directory
+        | otherwise -> do
+          runLogger lc $ L.debug $ "Reading " <> L.display fp <> " as metadata"
+          return $ MetaData bst
 
   -- TODO: Maybe model this instead
   removeOverrideAnnotations =

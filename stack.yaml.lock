@@ -51,11 +51,11 @@ packages:
     pantry-tree:
       size: 716
       sha256: 7c2bef341a9d795079becc028c8634ab0c42d67a7cde7bd8b2d2b3728320b417
-    commit: ba748b0cfcd9141cb7a6542b8808d477a340beaf
+    commit: d15322dbe00f75b1a0dac4a92bb111688b555db3
   original:
     subdir: reduce
     git: https://github.com/ucla-pls/reduce.git
-    commit: ba748b0cfcd9141cb7a6542b8808d477a340beaf
+    commit: d15322dbe00f75b1a0dac4a92bb111688b555db3
 - completed:
     subdir: reduce-util
     name: reduce-util
@@ -63,12 +63,12 @@ packages:
     git: https://github.com/ucla-pls/reduce.git
     pantry-tree:
       size: 2946
-      sha256: ee80f827eea3a6aff7c8cc4be3af30f5ac0ad2ca83e85fb9a1d6af33051c7b9d
-    commit: ba748b0cfcd9141cb7a6542b8808d477a340beaf
+      sha256: 669ca663247aa0b12779d31caf4a03ead85bd7e35a05ded5d25b27d2def6dd8b
+    commit: d15322dbe00f75b1a0dac4a92bb111688b555db3
   original:
     subdir: reduce-util
     git: https://github.com/ucla-pls/reduce.git
-    commit: ba748b0cfcd9141cb7a6542b8808d477a340beaf
+    commit: d15322dbe00f75b1a0dac4a92bb111688b555db3
 snapshots:
 - completed:
     size: 567672
