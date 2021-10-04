@@ -1,7 +1,7 @@
 # Auto-generated with fixnix (version 0.0.0)
 # add gh:ucla-pls/reduce
 builtins.fetchTarball {
-  name   = "reduce_d15322";
-  url    = "https://github.com/ucla-pls/reduce/archive/d15322dbe00f75b1a0dac4a92bb111688b555db3.tar.gz";
-  sha256 = "0n1p4jf4cr9s886lg2dryi507602n0a5ba7q6g8p856jhyc101gy";
+  name   = "reduce_4d6d25";
+  url    = "https://github.com/ucla-pls/reduce/archive/4d6d258a4c5df00ef12fc0820354ff796e3dbbd5.tar.gz";
+  sha256 = "16wa9szpzwi5ypyfqcyq9wg3lvgsj5mxq4y7ycfdqhhpl8j9akb0";
 }

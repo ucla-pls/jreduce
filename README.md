@@ -97,8 +97,6 @@ Available options:
   --exit ARG               require a specific exit code.
   --out ARG                require a specific stdout file.
   --err ARG                require a specific stderr file.
-  -T,--timelimit SECS      the maximum number of seconds to run the process,
-                           negative means no timelimit. (default: -1.0)
   CMD                      the command to run
   ARG..                    arguments to the command.
   -h,--help                Show this help text
