@@ -52,6 +52,7 @@ import           Prelude                 hiding ( fail
                                                 , not
                                                 , and
                                                 , or
+                                                , lookup
                                                 )
 
 -- import qualified Data.ByteString as BS
@@ -314,6 +315,16 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
   let
     handler :: ([Int], (Fact, Stmt Fact)) -> m CNF
     handler (idx, (fact, stmt)) = L.logtime L.DEBUG ("Processing " <> debuginfo) $ do
+
+      case stmtWarnings stmt of 
+        [] -> return ()
+        msgs -> do 
+          L.warn 
+            $ "Warnings found while computing logical dependencies for " 
+              <> displayFact fact
+          forM_ msgs \msg -> 
+            L.warn (Builder.fromString msg)
+
       mid <- liftIO $ readIORef maxid
       let cnf = toMinimalCNF mid nnfAfter
       liftIO $ writeIORef maxid
@@ -389,7 +400,7 @@ computeCNF sv keyFun wf items = L.phase "Compute CNF" do
   return cnf
 
 logProgression ::
-  forall a m k.
+  forall m k.
   MonadIOReader Config m
   => FilePath
   -> (k -> Builder.Builder)
@@ -399,11 +410,11 @@ logProgression ::
   -> m (NE.NonEmpty IS.IntSet)
 logProgression prog displayK variables cnf is = do
   let (limitedCNF, lok) = limitCNF is cnf
-  let progression = calculateSimpleProgression cnf is
+  let progs = calculateSimpleProgression cnf is
   dumpClosures <- view cfgDumpClosures
   when dumpClosures . liftIO $ do
     createDirectoryIfMissing True prog
-    i <- findNext [0 ..]
+    i <- findNext 0 
     LazyText.writeFile (indexedFile i "progression.txt")
       . LazyText.toLazyText
       . foldMap
@@ -412,7 +423,7 @@ logProgression prog displayK variables cnf is = do
           . map (displayShowS . showsVariable displayK variables)
           $ IS.toList a)
           <> "\n")
-      $ progression
+      $ progs
     LazyText.writeFile (indexedFile i "cnf.txt")
       . LazyText.toLazyText
       $ foldMap
@@ -429,7 +440,7 @@ logProgression prog displayK variables cnf is = do
     --     (\i -> displayShowS (showsVariable displayK variables i) <> "\n")
     --     (generateTotalGraphOrder (V.length lok) limitedCNF)
 
-  return progression
+  return progs
 
  where
 
@@ -463,10 +474,10 @@ logProgression prog displayK variables cnf is = do
   indexedFile :: Int -> String -> FilePath
   indexedFile i name = printf (prog </> "%04i-%s") i name
 
-  findNext (i:st) = do
+  findNext i = do
     let path = indexedFile i "progression.txt"
     b <- doesPathExist path
-    if not b then return i else findNext st
+    if not b then return i else findNext (i+1) 
 
 
 describeLogicProblem ::
@@ -495,8 +506,8 @@ describeLogicProblem cfg wf p = (\((a,b), c) -> (a,b,c)) <$> flip refineProblemA
       [ (a, a) | a <- [ 0..n-1 ]]
       [ G.Edge () t f
       | c <- S.toList $ CNF.cnfClauses cnf'
-      , let (ff, tt) = LS.splitLiterals c
-      , (f, t) <- liftM2 (,) (IS.toList ff) (IS.toList tt)
+      , let (ff', tt') = LS.splitLiterals c
+      , (f, t) <- liftM2 (,) (IS.toList ff') (IS.toList tt')
       ]
 
     order = V.fromList . reverse $ G.postOrd graph
@@ -1071,7 +1082,7 @@ methodExist f =
 
 orFailWith :: String -> [Stmt a] -> Stmt a
 orFailWith f = \case
-  [] -> error f
+  [] -> liftF (TWarning f False)
   a:as -> foldr (\/) a as
 
 requireField :: HasClassName c => Hierarchy -> c -> AbsFieldId -> Stmt Fact

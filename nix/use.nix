@@ -14,6 +14,7 @@ in
   pkgs.mkShell {
     name = "with-jreduce";
     nativeBuildInputs = [ 
+      pkgs.openjdk8
       ( with pkgs.haskell.lib;
       dontHaddock (dontCheck (disableLibraryProfiling
         ((haskellPackages.extend (pkgs.haskell.lib.packageSourceOverrides {
