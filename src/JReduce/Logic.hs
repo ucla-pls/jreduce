@@ -494,8 +494,16 @@ describeLogicProblem cfg wf p = (\((a,b), c) -> (a,b,c)) <$> flip refineProblemA
   cnf <- computeCNF (showsVariable displayFact variables) keyFun wf
     $ itoListOf (deepSubelements itemR) (ITarget s)
 
-  unless (isIPF cnf) $ do
-    fail "The created CNF was not IPF"
+  -- An IPF should have no clauses with only positive variables. 
+  case CNF.nonIPFClauses cnf of 
+    [] -> 
+      return ()
+    clauses -> do
+      L.err "The created CNF was not an IPF, this is a critical error." 
+      L.err "Please report at https://github.com/ucla-pls/jreduce."
+      forM_ clauses \cls -> 
+        L.err (displayString $ LS.displayImplication (showsVariable displayFact variables) cls "")
+      fail "The created CNF was not IPF"
 
   let
     (cnf', lookup) = CNF.limitCNF (cnfVariables cnf) cnf
@@ -1079,10 +1087,9 @@ methodExist :: AbsMethodId -> Stmt Fact
 methodExist f =
   tt (MethodExist f)
 
-
 orFailWith :: String -> [Stmt a] -> Stmt a
 orFailWith f = \case
-  [] -> liftF (TWarning f False)
+  [] -> liftF (TWarning f True)
   a:as -> foldr (\/) a as
 
 requireField :: HasClassName c => Hierarchy -> c -> AbsFieldId -> Stmt Fact

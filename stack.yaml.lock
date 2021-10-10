@@ -38,11 +38,11 @@ packages:
     git: https://github.com/ucla-pls/jvmhs.git
     pantry-tree:
       size: 7858
-      sha256: 7968973f9a2d1fc1e110f1f8ce7a4000bc3f91998c5370280315daf7167aa48f
-    commit: 9143907131a5062c9a52c34cee60776a96b9ea1f
+      sha256: 985e12a585760a9d9434971e37927ef2448907f44e22e8abbfe37845c718e700
+    commit: 18865087d573e23057ce3102b90cb8a1c607e1fd
   original:
     git: https://github.com/ucla-pls/jvmhs.git
-    commit: 9143907131a5062c9a52c34cee60776a96b9ea1f
+    commit: 18865087d573e23057ce3102b90cb8a1c607e1fd
 - completed:
     subdir: reduce
     name: reduce
@@ -51,11 +51,11 @@ packages:
     pantry-tree:
       size: 716
       sha256: 7c2bef341a9d795079becc028c8634ab0c42d67a7cde7bd8b2d2b3728320b417
-    commit: 029d3942383316111340a5fd9bdbe19276265c37
+    commit: b3ed58e1bd233140b1285b3ffbfbe7061709b416
   original:
     subdir: reduce
     git: https://github.com/ucla-pls/reduce.git
-    commit: 029d3942383316111340a5fd9bdbe19276265c37
+    commit: b3ed58e1bd233140b1285b3ffbfbe7061709b416
 - completed:
     subdir: reduce-util
     name: reduce-util
@@ -63,12 +63,12 @@ packages:
     git: https://github.com/ucla-pls/reduce.git
     pantry-tree:
       size: 2946
-      sha256: c9ae32de959dc3ed6098ea2360a510613dccabc81613a8dc0f36470f33548e21
-    commit: 029d3942383316111340a5fd9bdbe19276265c37
+      sha256: 18c4c156011d4c00260044d0e728f903363a2f97adb75a36de4b89a929bbd547
+    commit: b3ed58e1bd233140b1285b3ffbfbe7061709b416
   original:
     subdir: reduce-util
     git: https://github.com/ucla-pls/reduce.git
-    commit: 029d3942383316111340a5fd9bdbe19276265c37
+    commit: b3ed58e1bd233140b1285b3ffbfbe7061709b416
 snapshots:
 - completed:
     size: 567672

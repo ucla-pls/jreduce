@@ -9,7 +9,7 @@ extra-deps:
 - git: https://github.com/ucla-pls/jvmhs.git
   commit: 18865087d573e23057ce3102b90cb8a1c607e1fd
 - git: https://github.com/ucla-pls/reduce.git
-  commit: 029d3942383316111340a5fd9bdbe19276265c37
+  commit: b3ed58e1bd233140b1285b3ffbfbe7061709b416
   subdirs:
     - reduce
     - reduce-util
