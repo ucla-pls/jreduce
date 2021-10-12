@@ -72,6 +72,7 @@ data Config = Config
   , _cfgStubsFile        :: !(Maybe FilePath)
   , _cfgJreFolder        :: !(Maybe FilePath)
   , _cfgTarget           :: !FilePath
+  , _cfgUnsafe           :: !Bool
   , _cfgOutput           :: !(Maybe FilePath)
   , _cfgReducerName      :: !ReducerName
   , _cfgWorkFolder       :: !WorkFolder
@@ -226,6 +227,11 @@ configParser = do
     <> hidden
     <> metavar "JRE"
     <> help "the location of the stdlib."
+  
+  _cfgUnsafe <-
+    switch $ long "unsafe"
+    <> hidden
+    <> help "choose to ignore errors and continue regardless."
 
   _cfgDump <-
     parseDumpConfig

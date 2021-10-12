@@ -69,8 +69,6 @@ import Control.Monad.Reader
 
 -- base
 import           Control.Exception
-import           Control.Monad
-import           Control.Monad.IO.Class
 import qualified Data.List                     as List
 import           Data.Maybe
 import           Data.Bifunctor

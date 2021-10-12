@@ -298,7 +298,9 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
             Nothing -> do 
               return ()
           L.err $ "  got: " <>  display x
-          fail $ "Could not typecheck " <> show theMethodName
+          view cfgUnsafe >>= \case
+            True -> pure Nothing
+            False -> fail $ "Could not typecheck " <> show theMethodName
         (Nothing, vc) -> pure (Just (theMethodName, vc))
     _ -> 
       pure Nothing
@@ -341,11 +343,14 @@ initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
       case stmtWarnings stmt of 
         [] -> return ()
         msgs -> do 
-          L.warn 
+          L.err 
             $ "Warnings found while computing logical dependencies for " 
               <> displayFact fact
           forM_ msgs \msg -> 
-            L.warn (Builder.fromString msg)
+            L.err (Builder.fromString msg)
+          view cfgUnsafe >>= \case
+            True -> pure ()
+            False -> fail $ "warnings found while computing logical depenencies"
 
       mid <- liftIO $ readIORef maxid
       let cnf = toMinimalCNF mid nnfAfter
@@ -887,115 +892,118 @@ logic LogicConfig{..} hry tpinfo = \case
   --   ]
 
   ICode ((cls, method), code) -> CodeIsUntuched theMethodName
-    `withLogic` \c ->
-    [ -- If the code was not stubbed, then we have to require that the
-      -- classes in the exception table, stack map, and byte-code instructions
-      -- exits
-     -- c ==> requireClassNamesOf cls (codeExceptionTable.folded) code
-      c ==> requireClassNamesOf cls (codeStackMap._Just) code
-    , c ==> requireClassNamesOf cls (codeByteCode.folded) code
-    , c ==> forallOf (codeExceptionTable.folded.ehCatchType._Just) code \ct ->
-        requireClassName cls ct
-        /\ ct `requireSubtype` ("java/lang/Throwable" :: ClassName)
+    `withLogic` \c -> case M.lookup theMethodName tpinfo of
+      Just typeCheckStates ->
+        [ -- If the code was not stubbed, then we have to require that the
+          -- classes in the exception table, stack map, and byte-code instructions
+          -- exits
+         -- c ==> requireClassNamesOf cls (codeExceptionTable.folded) code
+          c ==> requireClassNamesOf cls (codeStackMap._Just) code
+        , c ==> requireClassNamesOf cls (codeByteCode.folded) code
+        , c ==> forallOf (codeExceptionTable.folded.ehCatchType._Just) code \ct ->
+            requireClassName cls ct
+            /\ ct `requireSubtype` ("java/lang/Throwable" :: ClassName)
 
-    ] ++
-    [ case oper of
-        ArrayStore _ ->
-          -- When we store an item in the array, it should be a subtype of the
-          -- content of the array.
-          c ==> stack 0 `requireSubtype` isArray (stack 2)
+        ] ++
+        [ case oper of
+            ArrayStore _ ->
+              -- When we store an item in the array, it should be a subtype of the
+              -- content of the array.
+              c ==> stack 0 `requireSubtype` isArray (stack 2)
 
-        Get fa fid ->
-          -- For a get value is valid the field has to exist, and the first
-          -- element on the stack has to be a subclass of fields class.
-          c ==> requireField hry cls fid
-            /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
+            Get fa fid ->
+              -- For a get value is valid the field has to exist, and the first
+              -- element on the stack has to be a subclass of fields class.
+              c ==> requireField hry cls fid
+                /\ given (fa /= B.FldStatic) (stack 0 `requireSubtype` fid^.className)
 
-        -- TODO: Experimental overapproximation.
-        -- The idea is to require all extensions of the class variable.
-        Push (Just (VClass (JTClass cn))) ->
-          c ==> forall (S.fromList p') unbrokenPath
-         where
-          p'=
-           [ path
-           | b <- superclasses cn hry
-           , path <- subclassPaths cn b hry
-           ]
+            -- TODO: Experimental overapproximation.
+            -- The idea is to require all extensions of the class variable.
+            Push (Just (VClass (JTClass cn))) ->
+              c ==> forall (S.fromList p') unbrokenPath
+             where
+              p'=
+               [ path
+               | b <- superclasses cn hry
+               , path <- subclassPaths cn b hry
+               ]
 
-        Put fa fid ->
-          -- For a put value is valid the field has to exist, and the first
-          -- element on the stack has to be a subclass of fields class, and
-          -- the second element have to be a subtype of the type of the field
-          c ==> requireField hry cls fid
-            /\ stack 0 `requireSubtype` fid^.fieldIdType
-            /\ given (fa /= B.FldStatic)
-              (stack 1 `requireSubtype` fid^.className)
+            Put fa fid ->
+              -- For a put value is valid the field has to exist, and the first
+              -- element on the stack has to be a subclass of fields class, and
+              -- the second element have to be a subtype of the type of the field
+              c ==> requireField hry cls fid
+                /\ stack 0 `requireSubtype` fid^.fieldIdType
+                /\ given (fa /= B.FldStatic)
+                  (stack 1 `requireSubtype` fid^.className)
 
-        Invoke a ->
-          -- For the methods there are three general cases, a regular method call,
-          -- a static methods call (no-object) and a dynamic call (no-class).
-          methodRequirements
-          /\ (c ==> and
-              [ s `requireSubtype` t
-              | (s, t) <- zip (state ^. tcStack) (reverse stackTypes)
-              ]
-            )
-          where
-            (methodRequirements, stackTypes) =
-              case methodInvokeTypes a of
-                Right (isSpecial, isStatic, m) ->
-                  ( let mid = AbsMethodId $ m^.asInClass
-                    in (c ==> if isSpecial then methodExist mid else requireMethod hry cls mid)
-                        /\ given (Text.isPrefixOf "access$" (m^.methodIdName))
-                          (methodExist mid ==> c)
-                        /\ given (
-                            ( maybe False (isNumber . fst) . Text.uncons . last . Text.splitOn "$"
-                            $ mid^.className.fullyQualifiedName
-                            )
-                            /\ mid^.className /= cls ^.className)
-                          (classExist (mid^.className) ==> c)
-                  , [asTypeInfo $ m^.asInClass.className | not isStatic]
-                    <> (map asTypeInfo $ m^.methodIdArgumentTypes)
-                  )
-                Left (i, m) ->
-                  ( ( c ==> requireBootstrapMethod cls (fromIntegral i) )
-                    /\ ( requireBootstrapMethod cls (fromIntegral i) ==> c)
-                  -- BootstrapMethods are bound to thier use without them
-                  -- they are nothing and should be removed
-                  , map asTypeInfo $ m^.methodIdArgumentTypes
-                  )
+            Invoke a ->
+              -- For the methods there are three general cases, a regular method call,
+              -- a static methods call (no-object) and a dynamic call (no-class).
+              methodRequirements
+              /\ (c ==> and
+                  [ s `requireSubtype` t
+                  | (s, t) <- zip (state ^. tcStack) (reverse stackTypes)
+                  ]
+                )
+              where
+                (methodRequirements, stackTypes) =
+                  case methodInvokeTypes a of
+                    Right (isSpecial, isStatic, m) ->
+                      ( let mid = AbsMethodId $ m^.asInClass
+                        in (c ==> if isSpecial then methodExist mid else requireMethod hry cls mid)
+                            /\ given (Text.isPrefixOf "access$" (m^.methodIdName))
+                              (methodExist mid ==> c)
+                            /\ given (
+                                ( maybe False (isNumber . fst) . Text.uncons . last . Text.splitOn "$"
+                                $ mid^.className.fullyQualifiedName
+                                )
+                                /\ mid^.className /= cls ^.className)
+                              (classExist (mid^.className) ==> c)
+                      , [asTypeInfo $ m^.asInClass.className | not isStatic]
+                        <> (map asTypeInfo $ m^.methodIdArgumentTypes)
+                      )
+                    Left (i, m) ->
+                      ( ( c ==> requireBootstrapMethod cls (fromIntegral i) )
+                        /\ ( requireBootstrapMethod cls (fromIntegral i) ==> c)
+                      -- BootstrapMethods are bound to thier use without them
+                      -- they are nothing and should be removed
+                      , map asTypeInfo $ m^.methodIdArgumentTypes
+                      )
 
-        Throw ->
-          -- A Throw operation requires that the first element on the stack is throwable.
-          c ==> stack 0 `requireSubtype` ("java/lang/Throwable" :: ClassName)
+            Throw ->
+              -- A Throw operation requires that the first element on the stack is throwable.
+              c ==> stack 0 `requireSubtype` ("java/lang/Throwable" :: ClassName)
 
-        CheckCast fa ->
-          -- The check cast operation requires that the first element on the stack
-          -- is either a subtype of the cast or the cast is a subtype of the first
-          -- element. Often only one of these are true.
-          c ==> stack 0 `requireSubtype` fa \/ fa `requireSubtype` stack 0
+            CheckCast fa ->
+              -- The check cast operation requires that the first element on the stack
+              -- is either a subtype of the cast or the cast is a subtype of the first
+              -- element. Often only one of these are true.
+              c ==> stack 0 `requireSubtype` fa \/ fa `requireSubtype` stack 0
 
-        Return (Just B.LRef) ->
-          -- We do require that the first element on the stack is a subtype of the return type.
-          c ==> forall (method^.methodReturnType.simpleType)
-            \mt -> stack 0 `requireSubtype` mt
+            Return (Just B.LRef) ->
+              -- We do require that the first element on the stack is a subtype of the return type.
+              c ==> forall (method^.methodReturnType.simpleType)
+                \mt -> stack 0 `requireSubtype` mt
 
-        InstanceOf ct ->
-          c ==> ct `requireSubtype` stack 0
+            InstanceOf ct ->
+              c ==> ct `requireSubtype` stack 0
 
-        _ -> true
-    | (state, B.opcode -> oper) <-
-        V.toList $ V.zip typeCheckStates (code ^. codeByteCode)
-    , let stack n =
-            case state ^? tcStack.ix n of
-              Just a -> a
-              Nothing ->
-                error $
-                "Incompatable stack length: " <> show n
-                <> " at: " <> show theMethodName
-                <> " bc: " <> show oper
-                <> " current stack: " <> show (state^.tcStack)
-    ]
+            _ -> true
+        | (state, B.opcode -> oper) <-
+            V.toList $ V.zip typeCheckStates (code ^. codeByteCode)
+        , let stack n =
+                case state ^? tcStack.ix n of
+                  Just a -> a
+                  Nothing ->
+                    error $
+                    "Incompatable stack length: " <> show n
+                    <> " at: " <> show theMethodName
+                    <> " bc: " <> show oper
+                    <> " current stack: " <> show (state^.tcStack)
+        ]
+      Nothing -> 
+        [liftF (TWarning "No type information: unsafely predict no dependencies" True)]
     where
       methodInvokeTypes = \case
         B.InvkSpecial (B.AbsVariableMethodId _ m) -> Right (True, False, m)
@@ -1003,10 +1011,6 @@ logic LogicConfig{..} hry tpinfo = \case
         B.InvkStatic (B.AbsVariableMethodId _ m) -> Right (False, True, m)
         B.InvkInterface _ (B.AbsInterfaceMethodId m) -> Right (False, False, m)
         B.InvkDynamic (B.InvokeDynamic i m') -> Left (i, m')
-
-      typeCheckStates = 
-        fromMaybe (error $ "Could not find " ++ show theMethodName ++ "in the typed methods") 
-        $ M.lookup theMethodName tpinfo
 
       theMethodName =
         mkAbsMethodId cls method
