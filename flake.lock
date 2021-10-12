@@ -1,0 +1,116 @@
+{
+  "nodes": {
+    "flake-utils": {
+      "locked": {
+        "lastModified": 1631561581,
+        "narHash": "sha256-3VQMV5zvxaVLvqqUrNz3iJelLw30mIVSfZmAaauM3dA=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "7e5bf3925f6fbdfaf50a2a7ca0be2879c4261d19",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "hspec-hedgehog": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-AmQk1EkZNPb3wUojCV7A2oFPiNyDKYWwEE5Gxjz8PCw=",
+        "type": "tarball",
+        "url": "https://hackage.haskell.org/package/hspec-hedgehog-0.0.1.2/hspec-hedgehog-0.0.1.2.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://hackage.haskell.org/package/hspec-hedgehog-0.0.1.2/hspec-hedgehog-0.0.1.2.tar.gz"
+      }
+    },
+    "jvm-binary": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-zUCTNawR+fH1PNhzHD9EeDm5bTrsnZmq0lyyzPimx3Q=",
+        "type": "tarball",
+        "url": "https://hackage.haskell.org/package/jvm-binary-0.10.0/jvm-binary-0.10.0.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://hackage.haskell.org/package/jvm-binary-0.10.0/jvm-binary-0.10.0.tar.gz"
+      }
+    },
+    "jvmhs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1633874159,
+        "narHash": "sha256-IHhJ9Zn+plD5OcVT8XFCXmkoK+2zKpjyksRWhMefYjc=",
+        "owner": "ucla-pls",
+        "repo": "jvmhs",
+        "rev": "18865087d573e23057ce3102b90cb8a1c607e1fd",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ucla-pls",
+        "repo": "jvmhs",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1622516815,
+        "narHash": "sha256-ZjBd81a6J3TwtlBr3rHsZspYUwT9OdhDk+a/SgSEf7I=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "7e9b0dff974c89e070da1ad85713ff3c20b0ca97",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "21.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "recursion-schemes": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-1QlXWOm+IB1Y1Og2LHbJAC7IMa+eo8G8AP9bN1oo5Zc=",
+        "type": "tarball",
+        "url": "https://hackage.haskell.org/package/recursion-schemes-5.2.2.1/recursion-schemes-5.2.2.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://hackage.haskell.org/package/recursion-schemes-5.2.2.1/recursion-schemes-5.2.2.1.tar.gz"
+      }
+    },
+    "reduce-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1633897898,
+        "narHash": "sha256-o/hHFYz+I3JoTm4SnYpr5gvyeXECOifs4Whb99P6Iw4=",
+        "owner": "ucla-pls",
+        "repo": "reduce",
+        "rev": "b3ed58e1bd233140b1285b3ffbfbe7061709b416",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ucla-pls",
+        "repo": "reduce",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "flake-utils": "flake-utils",
+        "hspec-hedgehog": "hspec-hedgehog",
+        "jvm-binary": "jvm-binary",
+        "jvmhs": "jvmhs",
+        "nixpkgs": "nixpkgs",
+        "recursion-schemes": "recursion-schemes",
+        "reduce-src": "reduce-src"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
