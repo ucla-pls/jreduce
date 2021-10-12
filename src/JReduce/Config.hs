@@ -97,7 +97,7 @@ instance HasReductionOptions Config where
   reductionOptions = cfgReductionOptions
 
 type MonadIOReader env m =
-  (MonadIO m, MonadReader env m)
+  (MonadIO m, MonadReader env m, MonadFail m)
 
 -- preloadClasses ::
 --   (HasConfig env, HasLogger env, MonadIOReader env m)

@@ -276,13 +276,35 @@ initializeKeyFunction ::
   forall m. MonadIOReader Config m
   => LogicConfig -> Target -> FilePath -> m (V.Vector (Fact, [Int]), Int, ([Int], Item) -> m CNF)
 initializeKeyFunction cfg trg wf = L.phase "Initializing key function" do
-  lfn  <- logic cfg <$> fetchHierachy wf (targetClasses trg)
+  hry  <- fetchHierachy wf (targetClasses trg)
   core <- view cfgCore
+
 
   let
     items =
       (if reverseOrder cfg then reverse else id)
       (itemsOfTarget trg)
+
+  tpinfo <- L.phase "Type checking methods" $ M.fromList . catMaybes <$> forM items \case 
+    (_, ICode ((cls, method), code)) -> do
+      let theMethodName = mkAbsMethodId cls method
+      case typeCheck hry theMethodName (method^.methodAccessFlags.contains MStatic) code of
+        (Just (i, x), _) -> do 
+          L.err $ "In " <> display theMethodName 
+          case code^?codeByteCode.ix i of 
+            Just s -> do
+              L.err $ "  at offset: " <> display (B.offset s)
+              L.err $ "  at opcode: " <> display (B.opcode s)
+            Nothing -> do 
+              return ()
+          L.err $ "  got: " <>  display x
+          fail $ "Could not typecheck " <> show theMethodName
+        (Nothing, vc) -> pure (Just (theMethodName, vc))
+    _ -> 
+      pure Nothing
+
+  let 
+    lfn = logic cfg hry tpinfo
 
     factsToVar :: M.Map Fact (S.Set Int)
     factsToVar =
@@ -639,8 +661,8 @@ describeGraphProblem cfg choose_first wf p = flip refineProblemA p \s -> do
   return (fromClosures, _targets)
 
 
-logic :: LogicConfig -> Hierarchy -> Item -> (Fact, Stmt Fact)
-logic LogicConfig{..} hry = \case
+logic :: LogicConfig -> Hierarchy -> M.Map AbsMethodId (V.Vector TypeCheckState) -> Item -> (Fact, Stmt Fact)
+logic LogicConfig{..} hry tpinfo = \case
 
   IContent (ClassFile cls) -> ClassExist (cls ^. className)
     `withLogic` \c ->
@@ -975,9 +997,6 @@ logic LogicConfig{..} hry = \case
                 <> " current stack: " <> show (state^.tcStack)
     ]
     where
-      theMethodName =
-        mkAbsMethodId cls method
-
       methodInvokeTypes = \case
         B.InvkSpecial (B.AbsVariableMethodId _ m) -> Right (True, False, m)
         B.InvkVirtual m -> Right (False, False, m)
@@ -985,15 +1004,13 @@ logic LogicConfig{..} hry = \case
         B.InvkInterface _ (B.AbsInterfaceMethodId m) -> Right (False, False, m)
         B.InvkDynamic (B.InvokeDynamic i m') -> Left (i, m')
 
-      typeCheckStates =
-        case typeCheck hry theMethodName (method^.methodAccessFlags.contains MStatic) code of
-          (Just (i, x), _) -> error
-            (show theMethodName
-              ++ " "
-              ++ show (code^?codeByteCode.ix i)
-              ++ " "
-              ++ show x)
-          (Nothing, vc) -> vc
+      typeCheckStates = 
+        fromMaybe (error $ "Could not find " ++ show theMethodName ++ "in the typed methods") 
+        $ M.lookup theMethodName tpinfo
+
+      theMethodName =
+        mkAbsMethodId cls method
+
 
   IContent (Jar _) -> (Meta, true)
   IContent (MetaData _) -> (Meta, true)
